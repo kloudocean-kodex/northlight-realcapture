@@ -1,6 +1,6 @@
 import{requireSession,error,json,supa}from'../../_lib/core.js';
 
-function canSeeTask(t,s){return ['admin','owner'].includes(s.role)||(s.role==='agent'&&t.agent_user_id===s.userId)||(s.role==='photographer'&&t.photographer_user_id===s.userId)||(s.role==='editor'&&t.editor_user_id===s.userId)}
+function canSeeTask(t,s){if(t.deleted_at)return false;if(['admin','owner'].includes(s.role))return true;if(t.archived_at)return false;return(s.role==='agent'&&t.agent_user_id===s.userId)||(s.role==='photographer'&&t.photographer_user_id===s.userId)||(s.role==='editor'&&t.editor_user_id===s.userId)}
 function sanitize(t,s){if(['admin','owner'].includes(s.role))return t;const {dropbox_path,...rest}=t,meta={...(rest.metadata||{})};delete meta.dropbox_link;delete meta.dropbox_path;delete meta.xero_invoice_id;delete meta.invoice_total;return{...rest,metadata:meta}}
 
 export async function onRequestGet({request,env,params}){const a=await requireSession(request,env);if(a.error)return a.error;try{const t=(await supa(env,'tasks',{query:`select=*&id=eq.${encodeURIComponent(params.id)}&limit=1`}))?.[0];if(!t||!canSeeTask(t,a.session))return error(404,'Task not found.');const events=await supa(env,'task_events',{query:`select=id,type,actor_user_id,detail,created_at&task_id=eq.${encodeURIComponent(t.id)}&order=created_at.desc`});return json({task:sanitize(t,a.session),events})}catch(e){return error(500,'Could not load task.',e.message)}}
