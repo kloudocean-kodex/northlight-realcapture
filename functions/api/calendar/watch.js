@@ -1,0 +1,4 @@
+import{requireSession,error,json,supa,tenant}from'../../_lib/core.js';
+import{startCalendarWatch}from'../../_lib/calendar-sync.js';
+
+export async function onRequestPost({request,env}){const a=await requireSession(request,env);if(a.error)return a.error;try{const t=await tenant(env),rows=await supa(env,'provider_profiles',{query:`select=calendar_id&tenant_id=eq.${t.id}&user_id=eq.${encodeURIComponent(a.session.userId)}&limit=1`}),calendarId=rows?.[0]?.calendar_id||'primary',d=await startCalendarWatch(env,a.session.userId,calendarId,new URL(request.url).origin);return json({ok:true,channelId:d.id,expiresAt:d.expiration||null})}catch(e){return error(400,'Could not start Calendar watch.',e.message)}}
