@@ -1,1 +1,1 @@
-{"name":"northlight-realcapture","private":true,"scripts":{"dev":"wrangler pages dev . --compatibility-date=2026-08-18"},"devDependencies":{"wrangler":"^4.0.0"}}
+{"name":"northlight-realcapture","private":true,"type":"module","scripts":{"build":"node scripts/build.mjs","check":"node scripts/build.mjs","dev":"wrangler pages dev dist --compatibility-date=2026-08-18"},"devDependencies":{"wrangler":"^4.0.0"}}
