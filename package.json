@@ -1,0 +1,1 @@
+{"name":"northlight-realcapture","private":true,"scripts":{"dev":"wrangler pages dev . --compatibility-date=2026-08-18"},"devDependencies":{"wrangler":"^4.0.0"}}
