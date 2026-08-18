@@ -1,0 +1,6 @@
+import{verifyDropboxSignature,syncDropbox,connectedDropboxAccount}from'../_lib/dropbox-sync.js';
+import{logSync}from'../_lib/core.js';
+
+export async function onRequestGet({request}){const u=new URL(request.url),challenge=u.searchParams.get('challenge');if(!challenge)return new Response('missing challenge',{status:400});return new Response(challenge,{status:200,headers:{'content-type':'text/plain','x-content-type-options':'nosniff'}})}
+
+export async function onRequestPost(context){const{request,env}=context,raw=await request.text(),signature=request.headers.get('x-dropbox-signature');if(!await verifyDropboxSignature(raw,signature,env.DROPBOX_APP_SECRET))return new Response('invalid signature',{status:401});let payload={};try{payload=JSON.parse(raw)}catch{return new Response('invalid json',{status:400})}const{accountId}=await connectedDropboxAccount(env),accounts=payload?.list_folder?.accounts||[];if(accountId&&accounts.length&&!accounts.includes(accountId))return new Response(null,{status:200});const job=(async()=>{try{await syncDropbox(env,{fromWebhook:true})}catch(e){await logSync(env,'dropbox','inbound','files','webhook_failed',{status:'failed',error:e.message,payload:{accounts}})}})();if(context.waitUntil)context.waitUntil(job);else await job;return new Response(null,{status:200})}
