@@ -1,0 +1,45 @@
+name: Northlight CI
+
+on:
+  push:
+    branches: [northlight-production]
+  pull_request:
+    branches: [northlight-production]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build and syntax-check all JavaScript
+        run: npm run build
+
+      - name: Persist one-time wizard source normalization
+        if: github.event_name == 'push' && github.actor != 'github-actions[bot]'
+        shell: bash
+        run: |
+          if ! git diff --quiet -- assets/app-v2.js; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add assets/app-v2.js
+            git commit -m "fix: persist normalized Step 3 wizard source"
+            git push origin HEAD:northlight-production
+          else
+            echo "Wizard source already normalized; nothing to persist."
+          fi
