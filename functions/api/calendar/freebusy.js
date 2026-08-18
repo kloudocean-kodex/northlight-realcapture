@@ -1,0 +1,4 @@
+import{requireSession,error,json,supa}from'../../_lib/core.js';
+import{userGoogleRequest,userIntegration}from'../../_lib/user-integrations.js';
+
+export async function onRequestPost({request,env}){const a=await requireSession(request,env);if(a.error)return a.error;try{const b=await request.json(),userId=b.photographerId||b.userId||a.session.userId,calendarId=b.calendarId||'primary',ix=await userIntegration(env,userId,'google');if(!ix||ix.status!=='connected')return json({connected:false,busy:[]});const d=await userGoogleRequest(env,userId,'/calendar/v3/freeBusy',{method:'POST',body:JSON.stringify({timeMin:new Date(b.start).toISOString(),timeMax:new Date(b.end).toISOString(),timeZone:'Australia/Melbourne',items:[{id:calendarId}]})});return json({connected:true,busy:d.calendars?.[calendarId]?.busy||[]})}catch(e){return error(400,'Could not check photographer calendar.',e.message)}}
