@@ -9,9 +9,13 @@ if(existsSync(appPath)){
   const fixed="</button>`).join('')";
   const source=readFileSync(appPath,'utf8');
   const matches=source.split(broken).length-1;
-  if(matches!==1)throw new Error(`Northlight build guard expected exactly one Step 3 photographer-map syntax marker; found ${matches}.`);
-  writeFileSync(appPath,source.replace(broken,fixed));
-  console.log('Northlight build guard: repaired Step 3 photographer-map syntax before validation.');
+  if(matches>1)throw new Error(`Northlight build guard found ${matches} Step 3 photographer-map syntax markers; manual review required.`);
+  if(matches===1){
+    writeFileSync(appPath,source.replace(broken,fixed));
+    console.log('Northlight build guard: repaired Step 3 photographer-map syntax before validation.');
+  }else{
+    console.log('Northlight build guard: Step 3 photographer-map source is already normalized.');
+  }
 }
 function walk(dir,out=[]){for(const name of readdirSync(dir)){const p=join(dir,name),s=statSync(p);if(s.isDirectory())walk(p,out);else if(name.endsWith('.js'))out.push(p)}return out}
 const js=[...walk(join(root,'assets')),...walk(join(root,'functions'))];
