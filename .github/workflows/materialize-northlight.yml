@@ -1,0 +1,42 @@
+name: One-time materialize Northlight production source
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout staged cloud bundle
+        uses: actions/checkout@v4
+        with:
+          ref: cloud-materialize
+          fetch-depth: 0
+
+      - name: Reconstruct and validate source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/northlight-cloud
+          cat cloud_bundle/chunk_*.b64 | base64 --decode > /tmp/northlight-cloud.tgz
+          tar -xzf /tmp/northlight-cloud.tgz -C /tmp/northlight-cloud
+          test -f /tmp/northlight-cloud/index.html
+          test -f '/tmp/northlight-cloud/functions/api/[[path]].js'
+          node --check '/tmp/northlight-cloud/functions/api/[[path]].js'
+
+      - name: Publish complete source to northlight-production
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Northlight Cloud Build'
+          git config user.email 'northlight-cloud@users.noreply.github.com'
+          git fetch origin northlight-production
+          git checkout -B northlight-production origin/northlight-production
+          find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .gitignore -exec rm -rf {} +
+          cp -a /tmp/northlight-cloud/. .
+          git add -A
+          git commit -m 'feat: deploy Northlight REALCAPTURE cloud pilot' || true
+          git push origin northlight-production
