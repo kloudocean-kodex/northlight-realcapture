@@ -1,8 +1,18 @@
 import{execFileSync}from'node:child_process';
-import{cpSync,existsSync,mkdirSync,readdirSync,rmSync,statSync}from'node:fs';
+import{cpSync,existsSync,mkdirSync,readFileSync,readdirSync,rmSync,statSync,writeFileSync}from'node:fs';
 import{join}from'node:path';
 
 const root=process.cwd();
+const appPath=join(root,'assets','app-v2.js');
+if(existsSync(appPath)){
+  const broken="</button>`}).join('')";
+  const fixed="</button>`).join('')";
+  const source=readFileSync(appPath,'utf8');
+  const matches=source.split(broken).length-1;
+  if(matches!==1)throw new Error(`Northlight build guard expected exactly one Step 3 photographer-map syntax marker; found ${matches}.`);
+  writeFileSync(appPath,source.replace(broken,fixed));
+  console.log('Northlight build guard: repaired Step 3 photographer-map syntax before validation.');
+}
 function walk(dir,out=[]){for(const name of readdirSync(dir)){const p=join(dir,name),s=statSync(p);if(s.isDirectory())walk(p,out);else if(name.endsWith('.js'))out.push(p)}return out}
 const js=[...walk(join(root,'assets')),...walk(join(root,'functions'))];
 for(const file of js)execFileSync(process.execPath,['--check',file],{stdio:'inherit'});
