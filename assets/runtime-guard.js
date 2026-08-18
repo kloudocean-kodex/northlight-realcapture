@@ -20,10 +20,18 @@
     if(/\/api\/tasks(?:\?|$)/.test(url)&&method==='POST'&&response.ok){try{const d=await response.clone().json();queueMicrotask(()=>startHandoffs(d.task))}catch{}}
     return response;
   };
+  async function addRecipientControl(){
+    const title=document.querySelector('.topbar h2'),role=document.querySelector('.role-pill'),grid=document.querySelector('#page .settings-grid');
+    if(title?.textContent?.trim()!=='Settings'||!/^Admin\b/i.test(role?.textContent||'')||!grid||document.querySelector('#operationsRecipientCard'))return;
+    const card=document.createElement('div');card.id='operationsRecipientCard';card.className='card section-card';card.innerHTML='<span class="service-icon">@</span><h3>Notification recipient</h3><p class="detail-copy">Assignment mail goes to the assigned photographer when a real email is configured. This address is the operational fallback for pilot accounts and task alerts.</p><div class="field"><label for="operationsEmail">Operations email</label><input id="operationsEmail" type="email" autocomplete="email" placeholder="operations@realcapture.com.au"></div><button class="btn primary" id="saveOperationsEmail">Save recipient</button><div class="hint" id="operationsEmailStatus">Loading current recipient…</div>';
+    grid.appendChild(card);
+    try{const r=await nativeFetch('/api/settings',{credentials:'include'}),d=await r.json();if(!r.ok)throw new Error(d.error||'Could not load recipient');const input=card.querySelector('#operationsEmail'),status=card.querySelector('#operationsEmailStatus');input.value=d.operationsEmail||'';status.textContent=d.source==='workspace'?'Managed in Northlight Settings.':'Currently using the deployment fallback; save here to manage it in Northlight.';card.querySelector('#saveOperationsEmail').onclick=async()=>{const btn=card.querySelector('#saveOperationsEmail');btn.disabled=true;try{const rr=await nativeFetch('/api/settings',{method:'PATCH',credentials:'include',headers:jsonHeaders,body:JSON.stringify({operationsEmail:input.value.trim()})}),dd=await rr.json();if(!rr.ok)throw new Error(dd.error||'Could not save recipient');status.textContent='Saved in Northlight Settings.';toast('Notification recipient updated',dd.operationsEmail||'Deployment fallback restored.')}catch(e){toast('Could not update recipient',e.message)}finally{btn.disabled=false}}}catch(e){card.querySelector('#operationsEmailStatus').textContent=e.message}
+  }
   function polish(){
     document.querySelectorAll('.crafted strong').forEach(el=>el.textContent='ProddyG');
     const art=document.querySelector('.login-art'),credit=document.querySelector('.login-card .crafted'),location=art?.querySelector(':scope > small');
     if(art&&credit&&location&&!art.querySelector('.login-meta')){const meta=document.createElement('div');meta.className='login-meta';art.appendChild(meta);meta.appendChild(location);meta.appendChild(credit)}
+    addRecipientControl();
   }
   new MutationObserver(polish).observe(document.documentElement,{childList:true,subtree:true});
   document.addEventListener('DOMContentLoaded',polish);
