@@ -12,7 +12,7 @@ function normalizeOnce(source,broken,fixed,label){
 }
 if(existsSync(appPath)){
   let source=readFileSync(appPath,'utf8'),before=source;
-  source=normalizeOnce(source,"</button>`}).join('')","</button>`).join('')",'Step 3 photographer-map syntax');
+  source=normalizeOnce(source,"${p.missing.length?`<small class=\"missing\">Missing: ${p.missing.map(serviceName).join(', ')}</small>`:''}</button>`}).join('')}</div>","${p.missing.length?`<small class=\"missing\">Missing: ${p.missing.map(serviceName).join(', ')}</small>`:''}</button>`).join('')}</div>",'Step 3 photographer-map syntax');
   source=normalizeOnce(source,"['today','tasks','booking','attention'].filter(x=>n.includes(x)).map(x=>`","n.map(x=>`",'role-complete mobile navigation');
   source=normalizeOnce(source,"start=`${w.date}T${w.time}:00`,approx=new Date(`${w.date}T${w.time}:00+10:00`),end=new Date(approx.getTime()+minutes*60000).toISOString();","startLocal=`${w.date}T${w.time}`;",'Melbourne Calendar preview wall time');
   source=normalizeOnce(source,"JSON.stringify({photographerId:w.photographerId,start,end})","JSON.stringify({photographerId:w.photographerId,startLocal,durationMinutes:minutes})",'Calendar preview payload');
