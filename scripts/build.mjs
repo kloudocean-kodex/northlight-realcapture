@@ -7,6 +7,6 @@ function walk(dir,out=[]){for(const name of readdirSync(dir)){const p=join(dir,n
 const js=[...walk(join(root,'assets')),...walk(join(root,'functions'))];
 for(const file of js)execFileSync(process.execPath,['--check',file],{stdio:'inherit'});
 const dist=join(root,'dist');if(existsSync(dist))rmSync(dist,{recursive:true,force:true});mkdirSync(dist,{recursive:true});
-for(const name of ['index.html','_routes.json'])cpSync(join(root,name),join(dist,name));
+for(const name of ['index.html','_routes.json','_headers'])cpSync(join(root,name),join(dist,name));
 cpSync(join(root,'assets'),join(dist,'assets'),{recursive:true});
 console.log(`Northlight build OK: ${js.length} JavaScript files syntax-checked.`);
