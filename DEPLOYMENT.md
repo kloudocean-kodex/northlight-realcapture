@@ -24,7 +24,7 @@ Required:
 - `NORTHLIGHT_DEMO_KEY` (secret)
 - `SESSION_SECRET` (secret)
 - `TOKEN_ENCRYPTION_KEY` (secret)
-- `PILOT_PASSWORD` (secret)
+- `PILOT_LOGIN_PASSWORD` (secret)
 
 Google Workspace:
 
