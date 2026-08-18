@@ -76,7 +76,7 @@ Northlight owns **what happens next**. Specialist systems remain authoritative f
 ## Notifications
 
 - Assignment notification goes to the assigned Photographer's real email when configured.
-- `.local`/pilot addresses fall back to the Admin-managed tenant Operations Email.
+- `.local`/pilot addresses fall back to the Admin/Owner-managed tenant Operations Email.
 - Normal Agents cannot redirect system notifications to arbitrary recipients during booking.
 - Operational comment/issue alerts use the tenant Operations Email.
 - Notification/provider retries must remain idempotent.
