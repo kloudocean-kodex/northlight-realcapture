@@ -4,7 +4,7 @@ export const error=(status,message,detail)=>json({error:message,...(detail?{deta
 export async function body(req){try{return await req.json()}catch{return {}}}
 const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const unb64=s=>Uint8Array.from(atob(String(s).replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(s.length/4)*4,'=')),c=>c.charCodeAt(0));
-async function key(secret,usage=['sign']){return crypto.subtle.importKey('raw',enc.encode(secret),'HMAC',{hash:'SHA-256'},false,usage)}
+async function key(secret,usage=['sign']){return crypto.subtle.importKey('raw',enc.encode(secret),{name:'HMAC',hash:'SHA-256'},false,usage)}
 export async function sign(value,secret){return b64(await crypto.subtle.sign('HMAC',await key(secret),enc.encode(value)))}
 export async function safeEqual(a,b){if(!a||!b||a.length!==b.length)return false;let v=0;for(let i=0;i<a.length;i++)v|=a.charCodeAt(i)^b.charCodeAt(i);return v===0}
 export async function signedState(payload,secret){const raw=b64(enc.encode(JSON.stringify({...payload,exp:Date.now()+10*60*1000})));return `${raw}.${await sign(raw,secret)}`}
