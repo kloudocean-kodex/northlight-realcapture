@@ -1,2 +1,3 @@
 Northlight production release attestation probe only. Do not merge.
 Expected production base: ff861ac91ae6b4f1a10da7cc00c174e43e348e61
+Probe synchronization: 2
