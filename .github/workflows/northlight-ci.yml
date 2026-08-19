@@ -164,7 +164,7 @@ jobs:
           while IFS= read -r file; do
             rel="${file#dist/}"
             remote="$(mktemp)"
-            curl --fail --silent --show-error --max-time 20 "$base/$rel" -o "$remote"
+            curl --location --fail --silent --show-error --max-time 20 "$base/$rel" -o "$remote"
             if ! cmp -s "$file" "$remote"; then
               echo "::error::Deployed UI asset differs from browser-tested artifact: $rel"
               echo 'Local:'; sha256sum "$file"

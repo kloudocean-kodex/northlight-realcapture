@@ -20,6 +20,7 @@ test('release certification proves Cloudflare serves the same static UI bytes th
   assert.match(workflow,/startsWith\(github\.head_ref, 'northlight-certification-'\)/);
   assert.match(workflow,/printf '%s\\n' 'dist\/index\.html'/);
   assert.match(workflow,/find dist\/assets -type f -print \| sort/);
+  assert.match(workflow,/curl --location --fail --silent --show-error --max-time 20 "\$base\/\$rel"/);
   assert.match(workflow,/cmp -s "\$file" "\$remote"/);
   assert.match(workflow,/Cloudflare static UI matches the exact browser-tested artifact/);
 });
