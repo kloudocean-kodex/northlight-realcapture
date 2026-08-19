@@ -24,7 +24,7 @@ Required:
 - `NORTHLIGHT_DEMO_KEY` (secret)
 - `SESSION_SECRET` (secret)
 - `TOKEN_ENCRYPTION_KEY` (secret)
-- `PILOT_LOGIN_PASSWORD` (secret)
+- `PILOT_LOGIN_PASSWORD` (secret during gradual account migration)
 
 Google Workspace:
 
@@ -58,9 +58,9 @@ Authorised origin:
 Authorised redirect URIs:
 
 - `https://northlight-realcapture.pages.dev/oauth/google/callback` — shared REALCAPTURE Gmail
-- `https://northlight-realcapture.pages.dev/oauth/google-user/callback` — individual Agent/Photographer calendar connection
+- `https://northlight-realcapture.pages.dev/oauth/google-user/callback` — individual Photographer calendar connection
 
-Keep the OAuth consent application in Testing during the controlled pilot and add each real test Google account as a test user.
+Keep the OAuth consent application in Testing during the controlled pilot and add each real test Google account as a test user. Before a sustained production pilot, publish/verify the OAuth consent application as appropriate so Calendar/Gmail refresh access is not dependent on Testing-mode token lifetime.
 
 ## Dropbox developer app
 
@@ -98,26 +98,26 @@ Invoice and pricing endpoints are restricted to Northlight Admin/Owner signed se
 
 ## Post-deployment sequence
 
-1. Visit `/api/health` to confirm Pages Functions are running.
+1. Visit `/api/health` to confirm Pages Functions are running and the deployment SHA matches the intended `northlight-production` commit.
 2. Sign in as Admin.
 3. Visit `/api/preflight`; `ok` should be true and required variables should have no missing entries.
 4. Admin → Integrations → connect shared Google Workspace (Gmail).
 5. Admin → Integrations → connect Dropbox.
-6. Photographer/Agent → Availability → connect personal Google Calendar.
+6. Photographer → Availability → connect personal Google Calendar.
 7. Create a real property task and confirm:
    - role-specific calendar conflict check
-   - Google event creation on the selected photographer's calendar
+   - Google event creation on the selected Photographer's calendar
    - secure Dropbox service/stage folders
    - real Gmail assignment email
 8. Add a file directly in Dropbox and confirm webhook/cursor reconciliation appears in Northlight.
-9. Change the shoot time in Google Calendar and confirm incremental sync updates Northlight.
+9. Change the shoot time in the Photographer's Google Calendar and confirm incremental sync updates Northlight.
 10. When Xero credentials are available, connect Xero and test draft invoice + webhook status reflection.
 
 ## Access-control contract
 
 - Admin / REALCAPTURE Owner: full task, RAW, edited, final and finance visibility.
 - Agent: own tasks and approved final media only.
-- Photographer: assigned tasks, RAW/reference and approved final media.
+- Photographer: assigned tasks, RAW/reference and approved final media; personal Google Calendar connection.
 - Editor: assigned editing tasks, RAW/reference and working edited media.
 - Finance/Xero APIs: Admin/Owner only.
 
