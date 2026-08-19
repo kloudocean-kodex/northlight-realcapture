@@ -18,7 +18,10 @@ test('browser certification tests exact PR code locally and deployed production 
   assert.doesNotMatch(workflow,/--dump-dom/);
 });
 
-test('DevTools browser check proves the page main thread stays responsive after login render',()=>{
+test('DevTools browser check uses a Chrome-selected debugging port and proves sustained main-thread responsiveness',()=>{
+  assert.match(checker,/--remote-debugging-port=0/);
+  assert.doesNotMatch(checker,/remote-debugging-port=9222/);
+  assert.match(checker,/DevTools listening on ws:/);
   assert.match(checker,/new WebSocket\(/);
   assert.match(checker,/command\('Page\.navigate'/);
   assert.match(checker,/command\('Runtime\.evaluate'/g);
