@@ -20,6 +20,7 @@
     social:'<path d="M7 6h10l2 3v9H5V9z"/><path d="m10 10 5 3-5 3z"/>',
     mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/>',
     files:'<path d="M4 4h6l2 2h8v14H4z"/><path d="M8 11h8M8 15h6"/>',
+    folder:'<path d="M3 6h7l2 2h9v11H3z"/><path d="M3 9h18"/>',
     invoice:'<path d="M6 3h12v18l-2-1.2L14 21l-2-1.2L10 21l-2-1.2L6 21z"/><path d="M9 8h6M9 12h6M9 16h4"/>',
     database:'<ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/>',
     message:'<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/>',
@@ -29,6 +30,7 @@
     user:'<circle cx="12" cy="8" r="3"/><path d="M5 20c.7-4.2 3.2-6 7-6s6.3 1.8 7 6"/>',
     search:'<circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/>',
     lock:'<rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+    close:'<path d="M6 6l12 12M18 6 6 18"/>',
     spark:'<path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z"/><path d="m18 15 .8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z"/>'
   };
   const aliases={today:'home',tasks:'tasks',booking:'calendar',attention:'alert',team:'team',availability:'clock',editor:'editor',services:'plus',roles:'shield',integrations:'link',settings:'settings'};
