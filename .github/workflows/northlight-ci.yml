@@ -66,3 +66,67 @@ jobs:
           done
           echo "::error::Cloudflare production did not attest expected commit $expected"
           exit 1
+
+      - name: Install disposable browser smoke runtime
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Smoke actual Cloudflare production in desktop and mobile Chromium
+        run: |
+          mkdir -p browser-smoke
+          node --input-type=module <<'NODE'
+          import { chromium } from 'playwright';
+          import assert from 'node:assert/strict';
+          const base='https://northlight-realcapture.pages.dev';
+          const browser=await chromium.launch({headless:true});
+          async function smoke(name,viewport,mobile=false){
+            const context=await browser.newContext({viewport});
+            const page=await context.newPage();
+            const consoleErrors=[],pageErrors=[],criticalFailures=[];
+            page.on('console',m=>{if(m.type()==='error')consoleErrors.push(m.text())});
+            page.on('pageerror',e=>pageErrors.push(String(e)));
+            page.on('requestfailed',r=>{if(['document','script','stylesheet'].includes(r.resourceType()))criticalFailures.push(`${r.resourceType()}:${r.url()}:${r.failure()?.errorText||''}`)});
+            const response=await page.goto(base,{waitUntil:'networkidle',timeout:45000});
+            assert.equal(response?.status(),200,`${name}: root must return 200`);
+            const headers=response.headers();
+            assert.equal(headers['x-content-type-options'],'nosniff',`${name}: nosniff header`);
+            assert.equal(headers['x-frame-options'],'DENY',`${name}: frame denial`);
+            assert.match(headers['content-security-policy']||'',/frame-ancestors 'none'/,`${name}: CSP frame ancestors`);
+            assert.match(headers['referrer-policy']||'',/strict-origin-when-cross-origin/,`${name}: referrer policy`);
+            await page.getByText('One property.',{exact:false}).first().waitFor({state:'visible',timeout:15000});
+            assert.match(await page.title(),/Northlight/i,`${name}: title`);
+            assert.equal(await page.locator('input#email').count(),1,`${name}: email input`);
+            assert.equal(await page.locator('input#password').count(),1,`${name}: password input`);
+            assert.equal(await page.locator('label[for="email"]').count(),1,`${name}: email label association`);
+            assert.equal(await page.locator('label[for="password"]').count(),1,`${name}: password label association`);
+            const proddy=page.locator('a[href="https://proddyg.com"]');
+            assert.ok(await proddy.count()>=1,`${name}: ProddyG link exists`);
+            const visibleProddy=await proddy.evaluateAll(nodes=>nodes.some(n=>{const s=getComputedStyle(n);const r=n.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0}));
+            assert.ok(visibleProddy,`${name}: ProddyG credit visible`);
+            const overflow=await page.evaluate(()=>({scrollWidth:document.documentElement.scrollWidth,innerWidth:window.innerWidth}));
+            assert.ok(overflow.scrollWidth<=overflow.innerWidth+2,`${name}: no horizontal overflow ${JSON.stringify(overflow)}`);
+            if(mobile){
+              const art=page.locator('.login-art');
+              assert.equal(await art.evaluate(el=>getComputedStyle(el).display),'none',`${name}: decorative art hidden on mobile`);
+            }
+            assert.deepEqual(pageErrors,[],`${name}: page errors ${pageErrors.join(' | ')}`);
+            assert.deepEqual(criticalFailures,[],`${name}: critical request failures ${criticalFailures.join(' | ')}`);
+            assert.deepEqual(consoleErrors,[],`${name}: console errors ${consoleErrors.join(' | ')}`);
+            await page.screenshot({path:`browser-smoke/${name}.png`,fullPage:true});
+            console.log(`${name}: PASS ${viewport.width}x${viewport.height}`);
+            await context.close();
+          }
+          try{
+            await smoke('desktop-1440x900',{width:1440,height:900},false);
+            await smoke('mobile-390x844',{width:390,height:844},true);
+          } finally { await browser.close(); }
+          NODE
+
+      - name: Upload disposable browser screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: northlight-production-browser-smoke
+          path: browser-smoke/*.png
+          if-no-files-found: ignore
