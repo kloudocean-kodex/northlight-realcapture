@@ -52,7 +52,7 @@ Production origin: `https://northlight-realcapture.pages.dev`
 Google shared Workspace/Gmail:
 - `https://northlight-realcapture.pages.dev/oauth/google/callback`
 
-Google user-owned Calendar:
+Google user-owned Photographer Calendar:
 - `https://northlight-realcapture.pages.dev/oauth/google-user/callback`
 
 Dropbox:
@@ -74,7 +74,7 @@ Xero:
 ## Operational architecture
 - Northlight/Supabase: users, roles, tasks, schedule state, issues, comments, audit, sync state, invoice visibility
 - Dropbox: RAW / edited / final media and service folders
-- Google Calendar: each connected photographer/agent owns their schedule; Northlight creates/reschedules/cancels events and ingests external changes
+- Google Calendar: each connected Photographer owns their external schedule; Northlight creates/reschedules/cancels events and ingests external changes
 - Gmail: operational email notifications
 - Xero: accounting system of record; Northlight reflects invoice/payment state
 
@@ -100,4 +100,4 @@ npm run dev
 ```
 
 ## Commercial hardening after the controlled pilot
-Before broad customer rollout, move demo login to full managed authentication (password reset/MFA), make the repository private, configure production OAuth consent/verification as required, add scheduled reconciliation/watch renewal, tenant onboarding, rate limits, monitoring/alerts, backups and formal data-retention/privacy controls.
+Before broad customer rollout, complete individual-password migration and remove the shared pilot password, add managed password recovery/MFA, make the repository private, configure production OAuth consent/verification as required, add scheduled reconciliation/watch renewal, tenant onboarding, rate limits, monitoring/alerts, backups and formal data-retention/privacy controls.
