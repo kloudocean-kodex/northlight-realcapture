@@ -41,7 +41,7 @@
     const next=drawer.querySelector('.next');if(next?.nextSibling)drawer.insertBefore(card,next.nextSibling);else drawer.prepend(card);card.querySelector('#runtimeReassignBtn').onclick=openReassign;
   }
   function polish(){
-    document.querySelectorAll('.crafted strong').forEach(el=>el.textContent='ProddyG');
+    document.querySelectorAll('.crafted strong').forEach(el=>{if(el.textContent!=='ProddyG')el.textContent='ProddyG'});
     const art=document.querySelector('.login-art'),credit=document.querySelector('.login-card .crafted'),location=art?.querySelector(':scope > small');
     if(art&&credit&&location&&!art.querySelector('.login-meta')){const meta=document.createElement('div');meta.className='login-meta';art.appendChild(meta);meta.appendChild(location);meta.appendChild(credit)}
     addRecipientControl();addReassignControl();
