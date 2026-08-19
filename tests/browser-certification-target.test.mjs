@@ -18,11 +18,13 @@ test('browser certification tests exact PR code locally and deployed production 
   assert.doesNotMatch(workflow,/--dump-dom/);
 });
 
-test('DevTools browser check uses a Chrome-selected debugging port and proves sustained main-thread responsiveness',()=>{
-  assert.match(checker,/--remote-debugging-port=0/);
-  assert.doesNotMatch(checker,/remote-debugging-port=9222/);
-  assert.match(checker,/DevTools listening on ws:/);
-  assert.match(checker,/new WebSocket\(/);
+test('DevTools browser check uses Chromium pipe transport and proves sustained main-thread responsiveness',()=>{
+  assert.match(checker,/--remote-debugging-pipe/);
+  assert.doesNotMatch(checker,/remote-debugging-port=/);
+  assert.match(checker,/stdio:\['ignore','ignore','pipe','pipe','pipe'\]/);
+  assert.match(checker,/pipeClient\(browser\.stdio\[3\],browser\.stdio\[4\]\)/);
+  assert.match(checker,/Buffer\.from\(\[0\]\)/);
+  assert.match(checker,/command\('Target\.attachToTarget'/);
   assert.match(checker,/command\('Page\.navigate'/);
   assert.match(checker,/command\('Runtime\.evaluate'/g);
   assert.match(checker,/loginForm:!!document\.getElementById\('loginForm'\)/);
