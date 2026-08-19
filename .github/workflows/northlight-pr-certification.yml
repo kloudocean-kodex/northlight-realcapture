@@ -1,0 +1,26 @@
+name: Northlight PR Certification
+
+on:
+  pull_request:
+    branches: [northlight-production]
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR merge
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run production build and certification contracts
+        run: npm run build
