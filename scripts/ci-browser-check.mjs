@@ -10,67 +10,38 @@ if(!chrome)throw new Error('CHROME_BIN is required.');
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const profile=await mkdtemp(join(tmpdir(),'northlight-chrome-'));
-let browser=null,ws=null,chromeLog='';
+let browser=null,chromeLog='';
 
 function appendChromeLog(chunk){chromeLog=(chromeLog+String(chunk)).slice(-16000)}
 async function cleanup(){
-  try{ws?.close()}catch{}
   if(browser&&!browser.killed){try{browser.kill('SIGTERM')}catch{};await sleep(150);if(browser.exitCode===null)try{browser.kill('SIGKILL')}catch{}}
   await rm(profile,{recursive:true,force:true}).catch(()=>{});
 }
 process.once('SIGTERM',()=>cleanup().finally(()=>process.exit(143)));
 process.once('SIGINT',()=>cleanup().finally(()=>process.exit(130)));
 
-function withTimeout(promise,ms,label){
-  let timer;
-  return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(`${label} timed out after ${ms}ms`)),ms)})]).finally(()=>clearTimeout(timer));
-}
-async function waitForDevToolsPort(){
-  const deadline=Date.now()+10000;
-  const pattern=/DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\/devtools\/browser\/[A-Za-z0-9-]+/;
-  while(Date.now()<deadline){
-    const match=chromeLog.match(pattern);
-    if(match)return Number(match[1]);
-    if(browser?.exitCode!==null)throw new Error(`Chrome exited before DevTools became ready (${browser.exitCode}). ${chromeLog}`);
-    await sleep(100);
-  }
-  throw new Error(`Chrome did not publish a DevTools endpoint. ${chromeLog}`);
-}
-async function waitForPageTarget(port){
-  const deadline=Date.now()+5000;
-  let last='';
-  while(Date.now()<deadline){
-    try{
-      const r=await fetch(`http://127.0.0.1:${port}/json/list`);
-      if(r.ok){const list=await r.json(),page=list.find(x=>x.type==='page'&&x.webSocketDebuggerUrl);if(page)return page;last=`targets=${list.length}`}
-      else last=`HTTP ${r.status}`;
-    }catch(e){last=e.message}
-    if(browser?.exitCode!==null)throw new Error(`Chrome exited before a page target became ready (${browser.exitCode}). ${chromeLog}`);
-    await sleep(100);
-  }
-  throw new Error(`Chrome page target did not become ready on DevTools port ${port}: ${last}. ${chromeLog}`);
-}
-function openSocket(url){
-  return withTimeout(new Promise((resolve,reject)=>{
-    const socket=new WebSocket(url);
-    socket.addEventListener('open',()=>resolve(socket),{once:true});
-    socket.addEventListener('error',()=>reject(new Error('Could not connect to Chrome DevTools WebSocket.')),{once:true});
-  }),5000,'DevTools WebSocket connection');
-}
-function client(socket){
-  let id=0;
+function pipeClient(input,output){
+  let id=0,buffer=Buffer.alloc(0);
   const pending=new Map();
-  socket.addEventListener('message',event=>{
-    let msg;try{msg=JSON.parse(String(event.data))}catch{return}
-    if(!msg.id||!pending.has(msg.id))return;
-    const p=pending.get(msg.id);pending.delete(msg.id);clearTimeout(p.timer);
-    if(msg.error)p.reject(new Error(`${p.method}: ${msg.error.message||'protocol error'}`));else p.resolve(msg.result);
+  output.on('data',chunk=>{
+    buffer=Buffer.concat([buffer,chunk]);
+    for(;;){
+      const nul=buffer.indexOf(0);if(nul<0)break;
+      const raw=buffer.subarray(0,nul).toString('utf8');buffer=buffer.subarray(nul+1);
+      if(!raw)continue;
+      let msg;try{msg=JSON.parse(raw)}catch{continue}
+      if(!msg.id||!pending.has(msg.id))continue;
+      const p=pending.get(msg.id);pending.delete(msg.id);clearTimeout(p.timer);
+      if(msg.error)p.reject(new Error(`${p.method}: ${msg.error.message||'protocol error'}`));else p.resolve(msg.result);
+    }
   });
-  return(method,params={},timeoutMs=4000)=>new Promise((resolve,reject)=>{
+  output.on('error',e=>{for(const p of pending.values()){clearTimeout(p.timer);p.reject(e)}pending.clear()});
+  return(method,params={},timeoutMs=4000,sessionId=null)=>new Promise((resolve,reject)=>{
     const commandId=++id;
     const timer=setTimeout(()=>{pending.delete(commandId);reject(new Error(`${method} timed out after ${timeoutMs}ms`))},timeoutMs);
     pending.set(commandId,{resolve,reject,timer,method});
-    socket.send(JSON.stringify({id:commandId,method,params}));
+    const message={id:commandId,method,params};if(sessionId)message.sessionId=sessionId;
+    input.write(Buffer.concat([Buffer.from(JSON.stringify(message),'utf8'),Buffer.from([0])]),e=>{if(e){clearTimeout(timer);pending.delete(commandId);reject(e)}});
   });
 }
 const expression=`(()=>({
@@ -88,24 +59,33 @@ const valid=s=>s&&s.title==='Northlight · REALCAPTURE'&&s.loginForm&&s.email&&s
 try{
   browser=spawn(chrome,[
     '--headless=new','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--disable-background-networking',
-    '--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'
-  ],{stdio:['ignore','pipe','pipe']});
-  browser.stdout.on('data',appendChromeLog);
+    '--remote-debugging-pipe',`--user-data-dir=${profile}`,'about:blank'
+  ],{stdio:['ignore','ignore','pipe','pipe','pipe']});
   browser.stderr.on('data',appendChromeLog);
-  const port=await waitForDevToolsPort();
-  const page=await waitForPageTarget(port);
-  ws=await openSocket(page.webSocketDebuggerUrl);
-  const command=client(ws);
-  await command('Page.enable');
-  await command('Runtime.enable');
-  const nav=await command('Page.navigate',{url:target},5000);
+  const command=pipeClient(browser.stdio[3],browser.stdio[4]);
+
+  let targets;
+  try{targets=await command('Target.getTargets',{},8000)}catch(e){throw new Error(`Chrome DevTools pipe did not become responsive: ${e.message}. ${chromeLog}`)}
+  let page=(targets?.targetInfos||[]).find(x=>x.type==='page');
+  if(!page){
+    const created=await command('Target.createTarget',{url:'about:blank'},5000);
+    page={targetId:created?.targetId};
+  }
+  if(!page?.targetId)throw new Error(`Chrome DevTools pipe returned no page target. ${chromeLog}`);
+  const attached=await command('Target.attachToTarget',{targetId:page.targetId,flatten:true},5000);
+  const sessionId=attached?.sessionId;
+  if(!sessionId)throw new Error(`Chrome DevTools pipe could not attach to page target. ${chromeLog}`);
+
+  await command('Page.enable',{},4000,sessionId);
+  await command('Runtime.enable',{},4000,sessionId);
+  const nav=await command('Page.navigate',{url:target},5000,sessionId);
   if(nav?.errorText)throw new Error(`Navigation failed: ${nav.errorText}`);
 
   const deadline=Date.now()+20000;
   let state=null,lastError=null;
   while(Date.now()<deadline){
     try{
-      const result=await command('Runtime.evaluate',{expression,returnByValue:true},Math.min(3000,Math.max(500,deadline-Date.now())));
+      const result=await command('Runtime.evaluate',{expression,returnByValue:true},Math.min(3000,Math.max(500,deadline-Date.now())),sessionId);
       state=result?.result?.value||null;
       if(valid(state))break;
       lastError=null;
@@ -115,7 +95,7 @@ try{
   if(!valid(state))throw new Error(`Login did not become responsive. Last state=${JSON.stringify(state)}${lastError?` · ${lastError.message}`:''}. ${chromeLog}`);
 
   await sleep(1000);
-  const second=await command('Runtime.evaluate',{expression,returnByValue:true},3000);
+  const second=await command('Runtime.evaluate',{expression,returnByValue:true},3000,sessionId);
   const sustained=second?.result?.value||null;
   if(!valid(sustained))throw new Error(`Login stopped responding after initial render. State=${JSON.stringify(sustained)}. ${chromeLog}`);
   console.log(`Real-browser main thread responsive twice at ${target} · ${sustained.ready} · ${sustained.title}`);
