@@ -1,0 +1,180 @@
+name: Northlight CI
+
+on:
+  push:
+    branches:
+      - northlight-production
+      - 'northlight-certification-*'
+      - 'northlight-hardening-*'
+  pull_request:
+    branches: [northlight-production]
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build and syntax-check all JavaScript
+        run: npm run build
+
+      - name: Run production certification contracts
+        run: npm test
+
+      - name: Verify Cloudflare production release attestation
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == 'northlight-production')
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = 'pull_request' ]; then
+            expected="$PR_BASE_SHA"
+          else
+            expected="$CURRENT_SHA"
+          fi
+          base='https://northlight-realcapture.pages.dev'
+          attested=''
+          for attempt in $(seq 1 18); do
+            health="$(curl --fail --silent --show-error --max-time 15 "$base/api/health" || true)"
+            build="$(curl --fail --silent --show-error --max-time 15 "$base/build-info.json" || true)"
+            if [ -n "$health" ] && [ -n "$build" ]; then
+              health_sha="$(node -e 'try{const d=JSON.parse(process.argv[1]);process.stdout.write(String(d?.deployment?.commitSha||""))}catch{}' "$health")"
+              build_sha="$(node -e 'try{const d=JSON.parse(process.argv[1]);process.stdout.write(String(d?.commitSha||""))}catch{}' "$build")"
+              branch="$(node -e 'try{const d=JSON.parse(process.argv[1]);process.stdout.write(String(d?.deployment?.branch||""))}catch{}' "$health")"
+              echo "Attempt $attempt: health=$health_sha build=$build_sha branch=$branch expected=$expected"
+              if [ "$health_sha" = "$expected" ] && [ "$build_sha" = "$expected" ] && [ "$branch" = 'northlight-production' ]; then
+                attested='yes'
+                break
+              fi
+            else
+              echo "Attempt $attempt: production endpoint not ready"
+            fi
+            sleep 10
+          done
+          if [ "$attested" != 'yes' ]; then
+            echo "::error::Cloudflare production did not attest expected commit $expected"
+            exit 1
+          fi
+          echo "Cloudflare production attested exact Northlight commit $expected"
+
+      - name: Verify public production smoke surface
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == 'northlight-production')
+        run: |
+          set -euo pipefail
+          base='https://northlight-realcapture.pages.dev'
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          curl --fail --silent --show-error --max-time 20 -D "$headers" "$base/" -o "$body"
+          grep -Fq '<title>Northlight · REALCAPTURE</title>' "$body"
+          grep -Fq 'property="og:title" content="Northlight · REALCAPTURE"' "$body"
+          grep -Fq 'rel="icon" href="/assets/favicon.svg"' "$body"
+          grep -qi '^content-security-policy:' "$headers"
+          grep -qi '^x-frame-options: DENY' "$headers"
+          grep -qi '^x-content-type-options: nosniff' "$headers"
+          grep -qi '^referrer-policy: strict-origin-when-cross-origin' "$headers"
+          grep -qi '^permissions-policy:' "$headers"
+          curl --fail --silent --show-error --max-time 20 "$base/assets/favicon.svg" >/dev/null
+          for path in /api/auth/session /api/bootstrap /api/preflight; do
+            code="$(curl --silent --show-error --max-time 20 -o /tmp/northlight-protected.json -w '%{http_code}' "$base$path")"
+            if [ "$code" != '401' ]; then
+              echo "::error::$path returned $code without a session; expected 401"
+              cat /tmp/northlight-protected.json || true
+              exit 1
+            fi
+          done
+          echo 'Public shell, social metadata, security headers, favicon and signed-out auth boundaries verified.'
+
+      - name: Verify rendered login from exact built UI in real Chrome
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == 'northlight-production')
+        env:
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/ci-browser-server.mjs >/tmp/northlight-browser-server.log 2>&1 &
+          server_pid=$!
+          cleanup(){ kill "$server_pid" 2>/dev/null || true; }
+          trap cleanup EXIT
+
+          ready=''
+          for attempt in $(seq 1 20); do
+            build="$(curl --fail --silent --show-error --max-time 5 'http://127.0.0.1:4173/build-info.json' || true)"
+            build_sha="$(node -e 'try{const d=JSON.parse(process.argv[1]||"{}");process.stdout.write(String(d?.commitSha||""))}catch{}' "$build")"
+            echo "Local browser target attempt $attempt: build=$build_sha expected=$CURRENT_SHA"
+            if [ "$build_sha" = "$CURRENT_SHA" ]; then
+              ready='yes'
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo '::error::Local Northlight browser server exited before readiness.'
+              cat /tmp/northlight-browser-server.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ "$ready" != 'yes' ]; then
+            echo "::error::Local built browser target did not reach expected commit $CURRENT_SHA"
+            cat /tmp/northlight-browser-server.log || true
+            exit 1
+          fi
+
+          chrome="$(command -v google-chrome || command -v google-chrome-stable || true)"
+          if [ -z "$chrome" ]; then
+            echo '::error::Google Chrome is not available on this runner.'
+            exit 1
+          fi
+          dom="$(mktemp)"
+          log="$(mktemp)"
+          if ! timeout --signal=KILL 30s "$chrome" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=5000 --dump-dom 'http://127.0.0.1:4173/' >"$dom" 2>"$log"; then
+            echo '::error::Exact built Northlight UI did not finish rendering in headless Chrome.'
+            cat "$log" || true
+            exit 1
+          fi
+          grep -Fq 'id="loginForm"' "$dom"
+          grep -Fq 'id="email"' "$dom"
+          grep -Fq 'id="password"' "$dom"
+          grep -Fq 'Secure workspace' "$dom"
+          grep -Fq 'Crafted by' "$dom"
+          grep -Fq 'ProddyG' "$dom"
+          echo 'Exact built Northlight signed-out login rendered and Chrome returned normally.'
+
+      - name: Verify deployed static UI matches browser-tested artifact
+        if: (github.event_name == 'pull_request' && startsWith(github.head_ref, 'northlight-certification-')) || (github.event_name == 'push' && github.ref_name == 'northlight-production')
+        run: |
+          set -euo pipefail
+          base='https://northlight-realcapture.pages.dev'
+          files="$(mktemp)"
+          printf '%s\n' 'dist/index.html' >"$files"
+          find dist/assets -type f -print | sort >>"$files"
+          checked=0
+          while IFS= read -r file; do
+            rel="${file#dist/}"
+            remote="$(mktemp)"
+            curl --location --fail --silent --show-error --max-time 20 "$base/$rel" -o "$remote"
+            if ! cmp -s "$file" "$remote"; then
+              echo "::error::Deployed UI asset differs from browser-tested artifact: $rel"
+              echo 'Local:'; sha256sum "$file"
+              echo 'Live:'; sha256sum "$remote"
+              exit 1
+            fi
+            checked=$((checked+1))
+          done <"$files"
+          if [ "$checked" -lt 2 ]; then
+            echo '::error::Static UI parity check did not inspect the expected asset set.'
+            exit 1
+          fi
+          echo "Cloudflare static UI matches the exact browser-tested artifact across $checked files."

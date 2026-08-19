@@ -1,0 +1,18 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://content.dropboxapi.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com https://www.dropbox.com https://login.xero.com
+
+/assets/*
+  Cache-Control: public, max-age=300, must-revalidate
+
+/api/*
+  Cache-Control: no-store
+
+/oauth/*
+  Cache-Control: no-store
+
+/webhooks/*
+  Cache-Control: no-store
