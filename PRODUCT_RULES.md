@@ -90,8 +90,13 @@ Northlight owns **what happens next**. Specialist systems remain authoritative f
 - Xero remains accounting source of truth; one Northlight task must not create duplicate Xero draft invoices on retry.
 - WhatsApp remains optional/disabled for the current REALCAPTURE pilot until a proper approved production configuration exists.
 
-## Tenancy / future SaaS
+## Tenancy / organizations / future SaaS
 
-- `tenant_id` is a permanent core concept even while REALCAPTURE is the only pilot tenant.
-- Before multi-customer rollout, tenant isolation must be database-enforced and tested against cross-tenant access.
+- `tenant_id` is a permanent hard security, commercial and branding boundary even while REALCAPTURE is the only pilot tenant.
+- The current REALCAPTURE tenant may eventually contain a provider organization plus multiple connected client real-estate organizations; organization authorization is defined in `MULTI_ORG_ARCHITECTURE.md`.
+- Pankaj currently maps to existing `Admin` for genuine full pilot authority; this compatibility mapping is not permission to use a blanket super-role across unrelated future tenants.
+- A role label alone is not sufficient future authorization. Multi-company access must be based on trusted tenant, organization membership, provider-client relationship and task participation.
+- Before multi-customer rollout, tenant and organization isolation must be database-enforced and tested against cross-tenant/cross-organization access, including negative tests for guessed IDs, files, search, exports, finance, integrations and notifications.
+- The current production pilot carries an interim **single-tenant fail-closed RLS guard**. Do not remove it or add a second tenant until the complete replacement tenant/org authorization layer is deployed in the same controlled release.
+- Do not fabricate organization records or memberships from guesses. Migrate people from confirmed business facts.
 - Never reuse the pilot magic-key/RLS approach as the final multi-tenant trust model.
