@@ -10,9 +10,9 @@ if(!chrome)throw new Error('CHROME_BIN is required.');
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const profile=await mkdtemp(join(tmpdir(),'northlight-chrome-'));
-let browser=null,ws=null,stderr='';
+let browser=null,ws=null,chromeLog='';
 
-function appendStderr(chunk){stderr=(stderr+String(chunk)).slice(-12000)}
+function appendChromeLog(chunk){chromeLog=(chromeLog+String(chunk)).slice(-16000)}
 async function cleanup(){
   try{ws?.close()}catch{}
   if(browser&&!browser.killed){try{browser.kill('SIGTERM')}catch{};await sleep(150);if(browser.exitCode===null)try{browser.kill('SIGKILL')}catch{}}
@@ -25,19 +25,30 @@ function withTimeout(promise,ms,label){
   let timer;
   return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(`${label} timed out after ${ms}ms`)),ms)})]).finally(()=>clearTimeout(timer));
 }
-async function waitForPageTarget(){
-  const deadline=Date.now()+8000;
+async function waitForDevToolsPort(){
+  const deadline=Date.now()+10000;
+  const pattern=/DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\/devtools\/browser\/[A-Za-z0-9-]+/;
+  while(Date.now()<deadline){
+    const match=chromeLog.match(pattern);
+    if(match)return Number(match[1]);
+    if(browser?.exitCode!==null)throw new Error(`Chrome exited before DevTools became ready (${browser.exitCode}). ${chromeLog}`);
+    await sleep(100);
+  }
+  throw new Error(`Chrome did not publish a DevTools endpoint. ${chromeLog}`);
+}
+async function waitForPageTarget(port){
+  const deadline=Date.now()+5000;
   let last='';
   while(Date.now()<deadline){
     try{
-      const r=await fetch('http://127.0.0.1:9222/json/list');
+      const r=await fetch(`http://127.0.0.1:${port}/json/list`);
       if(r.ok){const list=await r.json(),page=list.find(x=>x.type==='page'&&x.webSocketDebuggerUrl);if(page)return page;last=`targets=${list.length}`}
       else last=`HTTP ${r.status}`;
     }catch(e){last=e.message}
-    if(browser?.exitCode!==null)throw new Error(`Chrome exited before DevTools became ready (${browser.exitCode}). ${stderr}`);
+    if(browser?.exitCode!==null)throw new Error(`Chrome exited before a page target became ready (${browser.exitCode}). ${chromeLog}`);
     await sleep(100);
   }
-  throw new Error(`Chrome DevTools did not become ready: ${last}. ${stderr}`);
+  throw new Error(`Chrome page target did not become ready on DevTools port ${port}: ${last}. ${chromeLog}`);
 }
 function openSocket(url){
   return withTimeout(new Promise((resolve,reject)=>{
@@ -77,10 +88,12 @@ const valid=s=>s&&s.title==='Northlight · REALCAPTURE'&&s.loginForm&&s.email&&s
 try{
   browser=spawn(chrome,[
     '--headless=new','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--disable-background-networking',
-    '--remote-debugging-port=9222',`--user-data-dir=${profile}`,'about:blank'
-  ],{stdio:['ignore','ignore','pipe']});
-  browser.stderr.on('data',appendStderr);
-  const page=await waitForPageTarget();
+    '--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'
+  ],{stdio:['ignore','pipe','pipe']});
+  browser.stdout.on('data',appendChromeLog);
+  browser.stderr.on('data',appendChromeLog);
+  const port=await waitForDevToolsPort();
+  const page=await waitForPageTarget(port);
   ws=await openSocket(page.webSocketDebuggerUrl);
   const command=client(ws);
   await command('Page.enable');
@@ -99,12 +112,12 @@ try{
     }catch(e){lastError=e}
     await sleep(250);
   }
-  if(!valid(state))throw new Error(`Login did not become responsive. Last state=${JSON.stringify(state)}${lastError?` · ${lastError.message}`:''}`);
+  if(!valid(state))throw new Error(`Login did not become responsive. Last state=${JSON.stringify(state)}${lastError?` · ${lastError.message}`:''}. ${chromeLog}`);
 
   await sleep(1000);
   const second=await command('Runtime.evaluate',{expression,returnByValue:true},3000);
   const sustained=second?.result?.value||null;
-  if(!valid(sustained))throw new Error(`Login stopped responding after initial render. State=${JSON.stringify(sustained)}`);
+  if(!valid(sustained))throw new Error(`Login stopped responding after initial render. State=${JSON.stringify(sustained)}. ${chromeLog}`);
   console.log(`Real-browser main thread responsive twice at ${target} · ${sustained.ready} · ${sustained.title}`);
 }finally{
   await cleanup();
