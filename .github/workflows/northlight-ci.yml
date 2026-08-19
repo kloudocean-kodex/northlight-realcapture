@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  certify:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,3 +26,6 @@ jobs:
 
       - name: Build and syntax-check all JavaScript
         run: npm run build
+
+      - name: Run production certification contracts
+        run: npm test
