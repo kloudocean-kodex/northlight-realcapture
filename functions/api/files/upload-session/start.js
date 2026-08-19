@@ -1,0 +1,4 @@
+import{requireSession,error,json}from'../../../_lib/core.js';
+import{loadTask,validateUploadRequest,createUploadSession,UPLOAD_CHUNK_SIZE,LARGE_UPLOAD_THRESHOLD}from'../../../_lib/media-upload.js';
+
+export async function onRequestPost({request,env}){const a=await requireSession(request,env);if(a.error)return a.error;try{const b=await request.json(),t=await loadTask(env,b.taskId),v=validateUploadRequest(t,a.session,{stage:b.stage,serviceCode:b.serviceCode,filename:b.filename,sizeBytes:b.sizeBytes});if(!v.ok)return error(v.status,v.error);if(v.sizeBytes<=LARGE_UPLOAD_THRESHOLD)return error(400,'Use the standard direct upload path for files up to 150 MB.');const row=await createUploadSession(env,a.session,t,v,b.mimeType);return json({uploadId:row.id,path:row.path,chunkSize:UPLOAD_CHUNK_SIZE,sizeBytes:row.size_bytes,expiresAt:row.expires_at},201)}catch{return error(500,'Could not start the large-file upload.')}}
