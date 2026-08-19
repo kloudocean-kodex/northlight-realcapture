@@ -5,6 +5,7 @@ on:
     branches:
       - northlight-production
       - 'northlight-certification-*'
+      - 'northlight-hardening-*'
   pull_request:
     branches: [northlight-production]
 
