@@ -22,6 +22,24 @@
       const label=badge.textContent.trim();
       if(label==='Recommended'||label==='Available')badge.remove();
     }
+    const wrap=modal.querySelector('.photo-options');
+    if(wrap){
+      const current=[...wrap.querySelectorAll('.photo-option')],desired=[...current].sort((a,b)=>{
+        const setup=Number(a.disabled)-Number(b.disabled);if(setup)return setup;
+        const an=a.querySelector('h3')?.textContent?.trim()||'',bn=b.querySelector('h3')?.textContent?.trim()||'';
+        return an.localeCompare(bn,'en',{sensitivity:'base'});
+      });
+      if(desired.some((node,index)=>node!==current[index]))for(const node of desired)wrap.appendChild(node);
+    }
+  }
+  function removeStaleEditorLoad(){
+    for(const drawer of document.querySelectorAll('.person-drawer')){
+      const role=(drawer.querySelector('.eyebrow')?.textContent||'').split('·')[0].trim().toLowerCase();if(role!=='editor')continue;
+      for(const card of drawer.querySelectorAll('.section-card')){
+        if(card.querySelector('h3')?.textContent?.trim()!=='Editor profile')continue;
+        for(const copy of card.querySelectorAll('.detail-copy'))if(/^Current load\b/i.test(copy.textContent.trim()))copy.remove();
+      }
+    }
   }
   function polishMobileNav(){
     const activeView=document.querySelector('.sidebar .nav button.active[data-view]')?.dataset.view||'';
@@ -57,7 +75,7 @@
       if(btn.textContent.trim()==='×')btn.innerHTML=window.NLIcon('close');
     }
   }
-  function enforce(){enforcePersonCalendarContract();clarifyTeamCalendarCopy();honestPhotographerChoice();polishMobileNav();clarifyIntegrationActions();hardenTemporaryPassword();svgCloseControls()}
+  function enforce(){enforcePersonCalendarContract();clarifyTeamCalendarCopy();honestPhotographerChoice();removeStaleEditorLoad();polishMobileNav();clarifyIntegrationActions();hardenTemporaryPassword();svgCloseControls()}
   new MutationObserver(enforce).observe(document.documentElement,{childList:true,subtree:true});
   document.addEventListener('DOMContentLoaded',enforce);
   enforce();

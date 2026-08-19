@@ -7,6 +7,7 @@ const contract=await readFile(new URL('../assets/contract-runtime.js',import.met
 const css=await readFile(new URL('../assets/runtime.css',import.meta.url),'utf8');
 const icons=await readFile(new URL('../assets/icons.js',import.meta.url),'utf8');
 const admin=await readFile(new URL('../functions/api/admin/users.js',import.meta.url),'utf8');
+const adminUser=await readFile(new URL('../functions/api/admin/users/[id].js',import.meta.url),'utf8');
 const freebusy=await readFile(new URL('../functions/api/calendar/freebusy.js',import.meta.url),'utf8');
 const rules=await readFile(new URL('../PRODUCT_RULES.md',import.meta.url),'utf8');
 
@@ -26,6 +27,14 @@ test('photographer choice stays honest until date-time availability is actually 
   assert.match(contract,/label==='Recommended'\|\|label==='Available'/);
   assert.match(contract,/badge\.remove\(\)/);
   assert.doesNotMatch(contract,/Eligible|Perfect match|match score/i);
+});
+
+test('stale profile load cannot silently influence booking order or editor workload copy',()=>{
+  assert.match(contract,/Number\(a\.disabled\)-Number\(b\.disabled\)/);
+  assert.match(contract,/localeCompare\(bn,'en',\{sensitivity:'base'\}\)/);
+  assert.match(contract,/removeStaleEditorLoad/);
+  assert.match(contract,/\^Current load\\b/i);
+  assert.doesNotMatch(adminUser,/patch\.current_load|current_load\s*=/i);
 });
 
 test('mobile navigation exposes a quiet current-page state and respects phone safe areas',()=>{
