@@ -104,14 +104,27 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REF: ${{ github.head_ref }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CURRENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          server_pid=''
+          cleanup(){ if [ -n "$server_pid" ]; then kill "$server_pid" 2>/dev/null || true; fi; }
+          trap cleanup EXIT
+
           if [ "$EVENT_NAME" = 'pull_request' ]; then
-            alias="$(printf '%s' "$HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
-            target="https://${alias}.northlight-realcapture.pages.dev"
-            expected="$HEAD_SHA"
+            case "$HEAD_REF" in
+              northlight-certification-*)
+                target='https://northlight-realcapture.pages.dev'
+                expected="$PR_BASE_SHA"
+                ;;
+              *)
+                node scripts/ci-browser-server.mjs >/tmp/northlight-browser-server.log 2>&1 &
+                server_pid=$!
+                target='http://127.0.0.1:4173'
+                expected="$CURRENT_SHA"
+                ;;
+            esac
           else
             target='https://northlight-realcapture.pages.dev'
             expected="$CURRENT_SHA"
@@ -121,15 +134,21 @@ jobs:
           for attempt in $(seq 1 30); do
             build="$(curl --fail --silent --show-error --max-time 15 "$target/build-info.json" || true)"
             build_sha="$(node -e 'try{const d=JSON.parse(process.argv[1]||"{}");process.stdout.write(String(d?.commitSha||""))}catch{}' "$build")"
-            echo "Browser preview attempt $attempt: target=$target build=$build_sha expected=$expected"
+            echo "Browser target attempt $attempt: target=$target build=$build_sha expected=$expected"
             if [ "$build_sha" = "$expected" ]; then
               ready='yes'
               break
             fi
-            sleep 10
+            if [ -n "$server_pid" ] && ! kill -0 "$server_pid" 2>/dev/null; then
+              echo '::error::Local Northlight browser server exited before readiness.'
+              cat /tmp/northlight-browser-server.log || true
+              exit 1
+            fi
+            sleep 2
           done
           if [ "$ready" != 'yes' ]; then
-            echo "::error::Cloudflare browser target did not reach expected commit $expected"
+            echo "::error::Browser target did not reach expected commit $expected"
+            [ -f /tmp/northlight-browser-server.log ] && cat /tmp/northlight-browser-server.log || true
             exit 1
           fi
 
