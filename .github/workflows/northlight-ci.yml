@@ -2,7 +2,9 @@ name: Northlight CI
 
 on:
   push:
-    branches: [northlight-production]
+    branches:
+      - northlight-production
+      - 'northlight-certification-*'
   pull_request:
     branches: [northlight-production]
 
