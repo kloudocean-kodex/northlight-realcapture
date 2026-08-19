@@ -157,17 +157,7 @@ jobs:
             echo '::error::Google Chrome is not available on this runner.'
             exit 1
           fi
-          dom="$(mktemp)"
-          log="$(mktemp)"
-          if ! timeout --signal=KILL 30s "$chrome" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=5000 --dump-dom "$target/" >"$dom" 2>"$log"; then
-            echo '::error::Northlight did not finish rendering in headless Chrome.'
-            cat "$log" || true
+          if ! CHROME_BIN="$chrome" timeout --signal=TERM --kill-after=5s 40s node scripts/ci-browser-check.mjs "$target"; then
+            echo '::error::Northlight browser responsiveness certification failed.'
             exit 1
           fi
-          grep -Fq 'id="loginForm"' "$dom"
-          grep -Fq 'id="email"' "$dom"
-          grep -Fq 'id="password"' "$dom"
-          grep -Fq 'Secure workspace' "$dom"
-          grep -Fq 'Crafted by' "$dom"
-          grep -Fq 'ProddyG' "$dom"
-          echo "Real-browser signed-out login rendered and remained responsive at $target."
