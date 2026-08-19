@@ -24,7 +24,7 @@ create table if not exists public.organizations (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint organizations_type_check check (type in ('provider','client')),
-  constraint organizations_slug_check check (slug = lower(slug) and slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'),
+  constraint organizations_slug_check check (slug = lower(slug) and slug ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),
   constraint organizations_name_check check (length(btrim(name)) > 0),
   constraint organizations_settings_object_check check (jsonb_typeof(settings) = 'object'),
   constraint organizations_tenant_slug_key unique (tenant_id, slug),
@@ -126,11 +126,11 @@ begin
   where o.tenant_id = new.tenant_id
     and o.id = new.client_org_id;
 
-  if provider_type <> 'provider' then
+  if provider_type is distinct from 'provider' then
     raise exception 'organization_relationship_provider_must_be_provider';
   end if;
 
-  if client_type <> 'client' then
+  if client_type is distinct from 'client' then
     raise exception 'organization_relationship_client_must_be_client';
   end if;
 
