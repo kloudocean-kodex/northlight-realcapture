@@ -16,6 +16,7 @@ create table if not exists public.task_handoffs (
 
 alter table public.task_handoffs drop constraint if exists task_handoffs_kind_check;
 alter table public.task_handoffs add constraint task_handoffs_kind_check check (kind in ('dropbox','calendar','email','calendar_cancel'));
+create index if not exists task_handoffs_tenant_idx on public.task_handoffs (tenant_id);
 create index if not exists task_handoffs_recovery_idx on public.task_handoffs (status, next_attempt_at, updated_at);
 create index if not exists task_handoffs_task_idx on public.task_handoffs (task_id, kind);
 alter table public.task_handoffs enable row level security;
