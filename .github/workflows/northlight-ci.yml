@@ -47,6 +47,7 @@ jobs:
             expected="$CURRENT_SHA"
           fi
           base='https://northlight-realcapture.pages.dev'
+          attested=''
           for attempt in $(seq 1 18); do
             health="$(curl --fail --silent --show-error --max-time 15 "$base/api/health" || true)"
             build="$(curl --fail --silent --show-error --max-time 15 "$base/build-info.json" || true)"
@@ -55,14 +56,44 @@ jobs:
               build_sha="$(node -e 'try{const d=JSON.parse(process.argv[1]);process.stdout.write(String(d?.commitSha||""))}catch{}' "$build")"
               branch="$(node -e 'try{const d=JSON.parse(process.argv[1]);process.stdout.write(String(d?.deployment?.branch||""))}catch{}' "$health")"
               echo "Attempt $attempt: health=$health_sha build=$build_sha branch=$branch expected=$expected"
-              if [ "$health_sha" = "$expected" ] && [ "$build_sha" = "$expected" ]; then
-                echo "Cloudflare production attested exact Northlight commit $expected"
-                exit 0
+              if [ "$health_sha" = "$expected" ] && [ "$build_sha" = "$expected" ] && [ "$branch" = 'northlight-production' ]; then
+                attested='yes'
+                break
               fi
             else
               echo "Attempt $attempt: production endpoint not ready"
             fi
             sleep 10
           done
-          echo "::error::Cloudflare production did not attest expected commit $expected"
-          exit 1
+          if [ "$attested" != 'yes' ]; then
+            echo "::error::Cloudflare production did not attest expected commit $expected"
+            exit 1
+          fi
+          echo "Cloudflare production attested exact Northlight commit $expected"
+
+      - name: Verify public production smoke surface
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == 'northlight-production')
+        run: |
+          set -euo pipefail
+          base='https://northlight-realcapture.pages.dev'
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          curl --fail --silent --show-error --max-time 20 -D "$headers" "$base/" -o "$body"
+          grep -Fq '<title>Northlight · REALCAPTURE</title>' "$body"
+          grep -Fq 'property="og:title" content="Northlight · REALCAPTURE"' "$body"
+          grep -Fq 'rel="icon" href="/assets/favicon.svg"' "$body"
+          grep -qi '^content-security-policy:' "$headers"
+          grep -qi '^x-frame-options: DENY' "$headers"
+          grep -qi '^x-content-type-options: nosniff' "$headers"
+          grep -qi '^referrer-policy: strict-origin-when-cross-origin' "$headers"
+          grep -qi '^permissions-policy:' "$headers"
+          curl --fail --silent --show-error --max-time 20 "$base/assets/favicon.svg" >/dev/null
+          for path in /api/bootstrap /api/preflight; do
+            code="$(curl --silent --show-error --max-time 20 -o /tmp/northlight-protected.json -w '%{http_code}' "$base$path")"
+            if [ "$code" != '401' ]; then
+              echo "::error::$path returned $code without a session; expected 401"
+              cat /tmp/northlight-protected.json || true
+              exit 1
+            fi
+          done
+          echo 'Public shell, social metadata, security headers, favicon and auth boundaries verified.'
