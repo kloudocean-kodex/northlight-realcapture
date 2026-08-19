@@ -17,6 +17,7 @@ test('organization foundation is schema-only and dark to current app roles',()=>
 
 test('organization schema enforces tenant consistency and small justified role sets',()=>{
   assert.match(sql,/unique \(tenant_id, id\)/i);
+  assert.match(sql,/slug ~ '\^\[a-z0-9\]\+\(-\[a-z0-9\]\+\)\*\$'/i);
   assert.match(sql,/foreign key \(tenant_id, organization_id\)[\s\S]*references public\.organizations\(tenant_id, id\)/i);
   assert.match(sql,/foreign key \(tenant_id, user_id\)[\s\S]*references public\.users\(tenant_id, id\)/i);
   assert.match(sql,/foreign key \(tenant_id, provider_org_id\)[\s\S]*references public\.organizations\(tenant_id, id\)/i);
@@ -24,8 +25,8 @@ test('organization schema enforces tenant consistency and small justified role s
   assert.match(sql,/membership_role in \('provider_owner','photographer','editor','client_owner','agent'\)/i);
   assert.match(sql,/org_type = 'provider'[\s\S]*\('provider_owner','photographer','editor'\)/i);
   assert.match(sql,/org_type = 'client'[\s\S]*\('client_owner','agent'\)/i);
-  assert.match(sql,/provider_type <> 'provider'/i);
-  assert.match(sql,/client_type <> 'client'/i);
+  assert.match(sql,/provider_type is distinct from 'provider'/i);
+  assert.match(sql,/client_type is distinct from 'client'/i);
 });
 
 test('dormant organization tables retain the existing single-tenant kill switch without granting access',()=>{
