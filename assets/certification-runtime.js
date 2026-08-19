@@ -17,7 +17,7 @@
     const direct=url.match(/^\/api\/files\/direct-upload\/([^/]+)\/browser$/);if(direct&&method==='POST'&&init.body instanceof Blob)return new Response(JSON.stringify({ok:true,reused:true}),{status:200,headers:jsonHeaders});
     if(url==='/api/files/complete-upload'&&method==='POST'){try{const b=JSON.parse(String(init.body||'{}')),key=String(b.path||''),largeEntry=completedLargePaths.get(key),directEntry=directUploads.get(key),entry=largeEntry||directEntry;completeKey=key;if(entry)next={...init,body:JSON.stringify({...b,path:entry.actualPath||key,uploadSessionId:entry.uploadId})}}catch{}}
     const r=await baseFetch(input,next);
-    if(directPrep&&url==='/api/files/upload-link'&&method==='POST'&&r.ok){try{const d=await r.clone().json();if(d.uploadIntentId&&d.path)directUploads.set(String(d.path),{actualPath:String(d.path),uploadId:String(d.uploadIntentId)})}catch{}}
+    if(directPrep&&url==='/api/files/upload-link'&&method==='POST'&&r.ok){try{const d=await r.clone().json();if(d.uploadIntentId&&d.path)directUploads.set(String(d.path),{actualPath:String(d.path),uploadId:String(d.uploadIntentId)});if(d.providerComplete&&d.uploadIntentId&&d.path)return new Response(JSON.stringify({...d,url:`/api/files/direct-upload/${encodeURIComponent(d.uploadIntentId)}/browser`}),{status:200,headers:jsonHeaders})}catch{}}
     if(url==='/api/files/complete-upload'&&method==='POST'&&r.ok&&completeKey){completedLargePaths.delete(completeKey);directUploads.delete(completeKey)}
     if(url.includes('/api/bootstrap')&&method==='GET'&&r.ok){try{const d=await r.clone().json();sessionRole=d.session?.role||'';queueMicrotask(recoverPending)}catch{}}
     return r;
