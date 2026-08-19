@@ -105,13 +105,22 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REF: ${{ github.head_ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CURRENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = 'pull_request' ]; then
-            alias="$(printf '%s' "$HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
-            target="https://${alias}.northlight-realcapture.pages.dev"
-            expected="$HEAD_SHA"
+            case "$HEAD_REF" in
+              northlight-certification-*)
+                target='https://northlight-realcapture.pages.dev'
+                expected="$PR_BASE_SHA"
+                ;;
+              *)
+                alias="$(printf '%s' "$HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+                target="https://${alias}.northlight-realcapture.pages.dev"
+                expected="$HEAD_SHA"
+                ;;
+            esac
           else
             target='https://northlight-realcapture.pages.dev'
             expected="$CURRENT_SHA"
@@ -121,7 +130,7 @@ jobs:
           for attempt in $(seq 1 30); do
             build="$(curl --fail --silent --show-error --max-time 15 "$target/build-info.json" || true)"
             build_sha="$(node -e 'try{const d=JSON.parse(process.argv[1]||"{}");process.stdout.write(String(d?.commitSha||""))}catch{}' "$build")"
-            echo "Browser preview attempt $attempt: target=$target build=$build_sha expected=$expected"
+            echo "Browser target attempt $attempt: target=$target build=$build_sha expected=$expected"
             if [ "$build_sha" = "$expected" ]; then
               ready='yes'
               break
