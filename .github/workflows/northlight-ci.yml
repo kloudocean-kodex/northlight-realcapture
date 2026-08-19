@@ -98,3 +98,57 @@ jobs:
             fi
           done
           echo 'Public shell, social metadata, security headers, favicon and auth boundaries verified.'
+
+      - name: Verify rendered login in a real browser
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == 'northlight-production')
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = 'pull_request' ]; then
+            alias="$(printf '%s' "$HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+            target="https://${alias}.northlight-realcapture.pages.dev"
+            expected="$HEAD_SHA"
+          else
+            target='https://northlight-realcapture.pages.dev'
+            expected="$CURRENT_SHA"
+          fi
+
+          ready=''
+          for attempt in $(seq 1 30); do
+            build="$(curl --fail --silent --show-error --max-time 15 "$target/build-info.json" || true)"
+            build_sha="$(node -e 'try{const d=JSON.parse(process.argv[1]||"{}");process.stdout.write(String(d?.commitSha||""))}catch{}' "$build")"
+            echo "Browser preview attempt $attempt: target=$target build=$build_sha expected=$expected"
+            if [ "$build_sha" = "$expected" ]; then
+              ready='yes'
+              break
+            fi
+            sleep 10
+          done
+          if [ "$ready" != 'yes' ]; then
+            echo "::error::Cloudflare browser target did not reach expected commit $expected"
+            exit 1
+          fi
+
+          chrome="$(command -v google-chrome || command -v google-chrome-stable || true)"
+          if [ -z "$chrome" ]; then
+            echo '::error::Google Chrome is not available on this runner.'
+            exit 1
+          fi
+          dom="$(mktemp)"
+          log="$(mktemp)"
+          if ! timeout --signal=KILL 30s "$chrome" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=5000 --dump-dom "$target/" >"$dom" 2>"$log"; then
+            echo '::error::Northlight did not finish rendering in headless Chrome.'
+            cat "$log" || true
+            exit 1
+          fi
+          grep -Fq 'id="loginForm"' "$dom"
+          grep -Fq 'id="email"' "$dom"
+          grep -Fq 'id="password"' "$dom"
+          grep -Fq 'Secure workspace' "$dom"
+          grep -Fq 'Crafted by' "$dom"
+          grep -Fq 'ProddyG' "$dom"
+          echo "Real-browser signed-out login rendered and remained responsive at $target."
