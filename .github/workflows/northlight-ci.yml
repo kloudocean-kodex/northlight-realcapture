@@ -89,7 +89,7 @@ jobs:
           grep -qi '^referrer-policy: strict-origin-when-cross-origin' "$headers"
           grep -qi '^permissions-policy:' "$headers"
           curl --fail --silent --show-error --max-time 20 "$base/assets/favicon.svg" >/dev/null
-          for path in /api/bootstrap /api/preflight; do
+          for path in /api/auth/session /api/bootstrap /api/preflight; do
             code="$(curl --silent --show-error --max-time 20 -o /tmp/northlight-protected.json -w '%{http_code}' "$base$path")"
             if [ "$code" != '401' ]; then
               echo "::error::$path returned $code without a session; expected 401"
@@ -97,58 +97,38 @@ jobs:
               exit 1
             fi
           done
-          echo 'Public shell, social metadata, security headers, favicon and auth boundaries verified.'
+          echo 'Public shell, social metadata, security headers, favicon and signed-out auth boundaries verified.'
 
-      - name: Verify rendered login in a real browser
+      - name: Verify rendered login from exact built UI in real Chrome
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == 'northlight-production')
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          HEAD_REF: ${{ github.head_ref }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CURRENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          server_pid=''
-          cleanup(){ if [ -n "$server_pid" ]; then kill "$server_pid" 2>/dev/null || true; fi; }
+          node scripts/ci-browser-server.mjs >/tmp/northlight-browser-server.log 2>&1 &
+          server_pid=$!
+          cleanup(){ kill "$server_pid" 2>/dev/null || true; }
           trap cleanup EXIT
 
-          if [ "$EVENT_NAME" = 'pull_request' ]; then
-            case "$HEAD_REF" in
-              northlight-certification-*)
-                target='https://northlight-realcapture.pages.dev'
-                expected="$PR_BASE_SHA"
-                ;;
-              *)
-                node scripts/ci-browser-server.mjs >/tmp/northlight-browser-server.log 2>&1 &
-                server_pid=$!
-                target='http://127.0.0.1:4173'
-                expected="$CURRENT_SHA"
-                ;;
-            esac
-          else
-            target='https://northlight-realcapture.pages.dev'
-            expected="$CURRENT_SHA"
-          fi
-
           ready=''
-          for attempt in $(seq 1 30); do
-            build="$(curl --fail --silent --show-error --max-time 15 "$target/build-info.json" || true)"
+          for attempt in $(seq 1 20); do
+            build="$(curl --fail --silent --show-error --max-time 5 'http://127.0.0.1:4173/build-info.json' || true)"
             build_sha="$(node -e 'try{const d=JSON.parse(process.argv[1]||"{}");process.stdout.write(String(d?.commitSha||""))}catch{}' "$build")"
-            echo "Browser target attempt $attempt: target=$target build=$build_sha expected=$expected"
-            if [ "$build_sha" = "$expected" ]; then
+            echo "Local browser target attempt $attempt: build=$build_sha expected=$CURRENT_SHA"
+            if [ "$build_sha" = "$CURRENT_SHA" ]; then
               ready='yes'
               break
             fi
-            if [ -n "$server_pid" ] && ! kill -0 "$server_pid" 2>/dev/null; then
+            if ! kill -0 "$server_pid" 2>/dev/null; then
               echo '::error::Local Northlight browser server exited before readiness.'
               cat /tmp/northlight-browser-server.log || true
               exit 1
             fi
-            sleep 2
+            sleep 1
           done
           if [ "$ready" != 'yes' ]; then
-            echo "::error::Browser target did not reach expected commit $expected"
-            [ -f /tmp/northlight-browser-server.log ] && cat /tmp/northlight-browser-server.log || true
+            echo "::error::Local built browser target did not reach expected commit $CURRENT_SHA"
+            cat /tmp/northlight-browser-server.log || true
             exit 1
           fi
 
@@ -159,8 +139,8 @@ jobs:
           fi
           dom="$(mktemp)"
           log="$(mktemp)"
-          if ! timeout --signal=KILL 30s "$chrome" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=5000 --dump-dom "$target/" >"$dom" 2>"$log"; then
-            echo '::error::Northlight did not finish rendering in headless Chrome.'
+          if ! timeout --signal=KILL 30s "$chrome" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=5000 --dump-dom 'http://127.0.0.1:4173/' >"$dom" 2>"$log"; then
+            echo '::error::Exact built Northlight UI did not finish rendering in headless Chrome.'
             cat "$log" || true
             exit 1
           fi
@@ -170,4 +150,31 @@ jobs:
           grep -Fq 'Secure workspace' "$dom"
           grep -Fq 'Crafted by' "$dom"
           grep -Fq 'ProddyG' "$dom"
-          echo "Real-browser signed-out login rendered and remained responsive at $target."
+          echo 'Exact built Northlight signed-out login rendered and Chrome returned normally.'
+
+      - name: Verify deployed static UI matches browser-tested artifact
+        if: (github.event_name == 'pull_request' && startsWith(github.head_ref, 'northlight-certification-')) || (github.event_name == 'push' && github.ref_name == 'northlight-production')
+        run: |
+          set -euo pipefail
+          base='https://northlight-realcapture.pages.dev'
+          files="$(mktemp)"
+          printf '%s\n' 'dist/index.html' >"$files"
+          find dist/assets -type f -print | sort >>"$files"
+          checked=0
+          while IFS= read -r file; do
+            rel="${file#dist/}"
+            remote="$(mktemp)"
+            curl --fail --silent --show-error --max-time 20 "$base/$rel" -o "$remote"
+            if ! cmp -s "$file" "$remote"; then
+              echo "::error::Deployed UI asset differs from browser-tested artifact: $rel"
+              echo 'Local:'; sha256sum "$file"
+              echo 'Live:'; sha256sum "$remote"
+              exit 1
+            fi
+            checked=$((checked+1))
+          done <"$files"
+          if [ "$checked" -lt 2 ]; then
+            echo '::error::Static UI parity check did not inspect the expected asset set.'
+            exit 1
+          fi
+          echo "Cloudflare static UI matches the exact browser-tested artifact across $checked files."
