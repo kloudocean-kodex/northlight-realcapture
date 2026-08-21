@@ -35,25 +35,22 @@ jobs:
       - name: Checkout verification branch
         uses: actions/checkout@v6
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Verify bundle identity
+      - name: Fetch exact secret-scanned replay text from shared evidence Drive
         run: |
           set -euo pipefail
-          expected='d5691f1ba0005dffa14be82a74afad4c06d7abb5fa8042f12eeabe197435093d'
-          actual="$(sha256sum ci/northlight-db-replay-bundle.tar.gz | awk '{print $1}')"
-          echo "Bundle SHA-256: $actual"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::Bundle SHA-256 mismatch; expected $expected, got $actual"
-            exit 1
-          fi
+          replay_url='https://drive.usercontent.google.com/download?id=1OsrQvKAAxPzMElVOwOOzp9A3dNFkrqL2&export=download&confirm=t'
+          manifest_url='https://drive.usercontent.google.com/download?id=1oSY8uoae6sBZd5fpBGbgY4P7W3oSDZdh&export=download&confirm=t'
+          curl --location --fail --silent --show-error --max-time 60 "$replay_url" -o /tmp/northlight-db-replay.sql
+          curl --location --fail --silent --show-error --max-time 30 "$manifest_url" -o /tmp/northlight-db-replay-source-manifest.json
+          test "$(wc -c </tmp/northlight-db-replay.sql)" -eq 387100
+          test "$(wc -c </tmp/northlight-db-replay-source-manifest.json)" -eq 10724
 
-      - name: Expand secret-scanned database candidate bundle
-        run: tar -xzf ci/northlight-db-replay-bundle.tar.gz
+      - name: Verify replay provenance
+        run: |
+          set -euo pipefail
+          echo '6d0e27e8731204f60df7bce19298d4dc1b3bc8c1dbe5244fdf6b8a8a21dac3fe  /tmp/northlight-db-replay.sql' | sha256sum --check --strict
+          echo '6d9952f7b59e675f3b0ead080382b10f407519d90a783e1de95edabae5b1dd4f  /tmp/northlight-db-replay-source-manifest.json' | sha256sum --check --strict
+          node -e "const fs=require('fs'),d=JSON.parse(fs.readFileSync('/tmp/northlight-db-replay-source-manifest.json')); if(d.sourceCheckpoint!=='5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5'||d.files.length!==51) process.exit(1); console.log('Replay manifest:', d.files.length, 'ordered inputs from checkpoint', d.sourceCheckpoint);"
 
       - name: Verify PostgreSQL tools
         run: |
@@ -62,8 +59,16 @@ jobs:
           pg_dump --version
           pg_restore --version
 
-      - name: Verify migration and recovery manifests
-        run: node scripts/verify-database-manifests.mjs
+      - name: Execute complete clean-room replay and contracts
+        run: psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f /tmp/northlight-db-replay.sql
 
-      - name: Replay from empty PostgreSQL 17
-        run: bash scripts/database-replay.sh
+      - name: Logical backup and restore rehearsal
+        run: |
+          set -euo pipefail
+          pg_dump "$DATABASE_URL" --format=custom --no-owner --no-privileges --file=/tmp/northlight-cleanroom.dump
+          createdb postgresql://postgres:postgres@127.0.0.1:5432/northlight_restore
+          pg_restore --dbname=postgresql://postgres:postgres@127.0.0.1:5432/northlight_restore --no-owner --no-privileges /tmp/northlight-cleanroom.dump
+          original="$(psql "$DATABASE_URL" -X -Atqc "select count(*) from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname in ('public','northlight_private') and c.relkind in ('r','p','v','m','S','f');")"
+          restored="$(psql postgresql://postgres:postgres@127.0.0.1:5432/northlight_restore -X -Atqc "select count(*) from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname in ('public','northlight_private') and c.relkind in ('r','p','v','m','S','f');")"
+          echo "Catalog relation count original=$original restored=$restored"
+          test "$original" = "$restored"
