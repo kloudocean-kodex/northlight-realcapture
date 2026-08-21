@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      EXPECTED_HEAD: fe22a68dcd2f7fec8112cb5b078d747c7555a008
+      EXPECTED_HEAD: 0174819c4969bc083416b0f4df79402969e0baf4
       EXPECTED_BASE: 7a6947fa763b7aec169fc3f5b079494a00f49d93
       EXPECTED_PRODUCTION: 1c9696a463c2d12acf5b5ffe839bd8aa9d75f80f
     steps:
@@ -38,8 +38,8 @@ jobs:
           production="$(git ls-remote --heads origin refs/heads/northlight-production | awk '{print $1}')"
           test "$remote_candidate" = "$EXPECTED_HEAD"
           test "$production" = "$EXPECTED_PRODUCTION"
-          changed="$(git diff --name-only "$EXPECTED_BASE" "$EXPECTED_HEAD")"
-          expected=$'tests/durable-dispatcher.test.mjs\nworkers/integration-dispatcher/src/index.js'
+          changed="$(git diff --name-only "$EXPECTED_BASE" "$EXPECTED_HEAD" | sort)"
+          expected=$'tests/durable-dispatcher.test.mjs\nworkers/integration-dispatcher/src/index.js\nwrangler.jsonc'
           test "$changed" = "$expected"
           git diff --check "$EXPECTED_BASE" "$EXPECTED_HEAD"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
@@ -76,6 +76,14 @@ jobs:
           git restore --source=HEAD -- functions/_lib/build-info.js
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
+      - name: Validate Pages configuration and Functions bundle
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/northlight-pages-functions
+          npx wrangler pages functions build functions --outdir=/tmp/northlight-pages-functions 2>&1 | tee /tmp/northlight-pages-build.log
+          test -d /tmp/northlight-pages-functions
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
       - name: Validate Cloudflare dispatcher bundle and bindings
         run: npm run check:dispatcher
 
@@ -95,5 +103,6 @@ jobs:
           path: |
             /tmp/northlight-calendar-tests.log
             /tmp/northlight-calendar-build.log
+            /tmp/northlight-pages-build.log
           if-no-files-found: ignore
           retention-days: 30
