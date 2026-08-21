@@ -1,4 +1,61 @@
-import{readState,storeOAuth,error,supa,tenant}from'../../_lib/core.js';
-import{syncDropbox}from'../../_lib/dropbox-sync.js';
+import { requireSession, supa, tenant } from '../../_lib/core.js';
+import { syncDropbox } from '../../_lib/dropbox-sync.js';
+import {
+  consumeOAuthAuthorization,
+  oauthAuthorizationCode,
+  oauthFailure,
+  oauthOrigin,
+  oauthSuccess
+} from '../../_lib/oauth-security.js';
+import {
+  commitSharedOAuth,
+  dropboxAccount,
+  exchangeAuthorizationCode
+} from '../../_lib/oauth-lifecycle.js';
 
-export async function onRequestGet({request,env}){try{const u=new URL(request.url),state=await readState(u.searchParams.get('state'),env.SESSION_SECRET),code=u.searchParams.get('code');if(state.provider!=='dropbox')throw new Error('invalid_dropbox_state');if(!code)throw new Error('dropbox_code_missing');const r=await fetch('https://api.dropboxapi.com/oauth2/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({code,grant_type:'authorization_code',client_id:env.DROPBOX_APP_KEY,client_secret:env.DROPBOX_APP_SECRET,redirect_uri:`${u.origin}/oauth/dropbox/callback`})}),d=await r.json();if(!r.ok)throw new Error('dropbox_token_exchange_failed');const meR=await fetch('https://api.dropboxapi.com/2/users/get_current_account',{method:'POST',headers:{authorization:`Bearer ${d.access_token}`,'content-type':'application/json'},body:'null'}),me=await meR.json();if(!meR.ok)throw new Error('dropbox_profile_failed');await storeOAuth(env,'dropbox',{...d,account_label:me.name?.display_name||me.email||'Dropbox',metadata:{account_id:me.account_id,email:me.email}});const t=await tenant(env);await supa(env,'dropbox_sync_state',{method:'POST',query:'on_conflict=tenant_id,root_path',payload:{tenant_id:t.id,account_id:me.account_id,root_path:env.DROPBOX_ROOT||'/Northlight',cursor:null,last_sync_at:null,last_error:null,metadata:{}},prefer:'resolution=merge-duplicates,return=minimal'});try{await syncDropbox(env)}catch{}return Response.redirect(`${u.origin}/?connected=dropbox`,302)}catch{return error(400,'Dropbox connection failed. Return to Northlight and try again.')}}
+export async function onRequestGet({ request, env }) {
+  const auth = await requireSession(request, env, ['admin', 'owner']);
+  if (auth.error) return oauthFailure('dropbox', auth.error.status === 403 ? 403 : 401);
+  try {
+    const url = new URL(request.url);
+    const authorization = await consumeOAuthAuthorization(env, {
+      request,
+      provider: 'dropbox',
+      actorUserId: auth.session.userId,
+      state: url.searchParams.get('state')
+    });
+    const token = await exchangeAuthorizationCode(env, {
+      provider: 'dropbox',
+      origin: oauthOrigin(request, env),
+      code: oauthAuthorizationCode(url),
+      codeVerifier: authorization.codeVerifier
+    });
+    const account = await dropboxAccount(token.access_token);
+    await commitSharedOAuth(env, {
+      provider: 'dropbox',
+      token,
+      account,
+      actorUserId: auth.session.userId,
+      expectedGeneration: authorization.connectionGeneration
+    });
+    const currentTenant = await tenant(env);
+    await supa(env, 'dropbox_sync_state', {
+      method: 'POST',
+      query: 'on_conflict=tenant_id,root_path',
+      payload: {
+        tenant_id: currentTenant.id,
+        account_id: account.id,
+        root_path: env.DROPBOX_ROOT || '/Northlight',
+        cursor: null,
+        last_sync_at: null,
+        last_error: null,
+        metadata: {}
+      },
+      prefer: 'resolution=merge-duplicates,return=minimal'
+    });
+    try { await syncDropbox(env); } catch {}
+    return oauthSuccess(request, env, 'dropbox', authorization.returnPath);
+  } catch {
+    return oauthFailure('dropbox');
+  }
+}

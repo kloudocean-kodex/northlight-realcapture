@@ -26,13 +26,16 @@ jobs:
           package-manager-cache: false
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Build and syntax-check all JavaScript
         run: npm run build
 
       - name: Run production certification contracts
         run: npm test
+
+      - name: Validate durable dispatcher bundle and bindings
+        run: npm run check:dispatcher
 
       - name: Verify Cloudflare production release attestation
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == 'northlight-production')

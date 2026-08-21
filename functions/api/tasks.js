@@ -1,17 +1,190 @@
-import{requireSession,error,json,supa,tenant,logEvent}from'../_lib/core.js';
-import{evaluateBooking,schedulingStatus}from'../_lib/scheduling.js';
-import{queueTaskHandoffs}from'../_lib/task-handoffs.js';
+import { requireSession, error, json, supa, tenant } from '../_lib/core.js';
+import { evaluateBooking, schedulingStatus, isAtomicScheduleConflict } from '../_lib/scheduling.js';
+import { queueTaskHandoffs } from '../_lib/task-handoffs.js';
+const BOOKING_DEFAULTS={priority:'standard'};
 
-function visibleTask(t,s){if(['admin','owner'].includes(s.role))return t;const{dropbox_path,...rest}=t,meta={...(rest.metadata||{})};delete meta.dropbox_link;delete meta.dropbox_path;delete meta.xero_invoice_id;delete meta.invoice_total;delete meta.assignment_email_to;return{...rest,metadata:meta}}
-function filterTasks(rows,s){const alive=rows.filter(x=>!x.deleted_at);let out=[];if(['admin','owner'].includes(s.role))out=alive;else{const current=alive.filter(x=>!x.archived_at);if(s.role==='agent')out=current.filter(x=>x.agent_user_id===s.userId);else if(s.role==='photographer')out=current.filter(x=>x.photographer_user_id===s.userId);else if(s.role==='editor')out=current.filter(x=>x.editor_user_id===s.userId)}return out.map(x=>visibleTask(x,s))}
-async function taskById(env,id){return(await supa(env,'tasks',{query:`select=*&id=eq.${encodeURIComponent(id)}&deleted_at=is.null&limit=1`}))?.[0]||null}
-async function taskByKey(env,tenantId,key){if(!key)return null;return(await supa(env,'tasks',{query:`select=*&tenant_id=eq.${tenantId}&idempotency_key=eq.${encodeURIComponent(key)}&deleted_at=is.null&limit=1`}))?.[0]||null}
-function availabilityError(d){return error(schedulingStatus(d.code),d.reason,d.missingServices?.length?{missingServices:d.missingServices}:undefined)}
-function handoffSummary(t,{calendarConnected=null}={}){return{dropbox:t.dropbox_path?'done':'pending',calendar:t.calendar_event_id?'done':calendarConnected===false?'not_connected':'pending',email:t.metadata?.assignment_email_user_id===t.photographer_user_id?'done':'pending'}}
+function visibleTask(task, session) {
+  if (['admin', 'owner'].includes(session.role)) return task;
+  const { dropbox_path, ...rest } = task;
+  const metadata = { ...(rest.metadata || {}) };
+  delete metadata.dropbox_link;
+  delete metadata.dropbox_path;
+  delete metadata.xero_invoice_id;
+  delete metadata.invoice_total;
+  delete metadata.assignment_email_to;
+  return { ...rest, metadata };
+}
 
-export async function onRequestGet({request,env}){const a=await requireSession(request,env);if(a.error)return a.error;try{const url=new URL(request.url),scope=url.searchParams.get('scope')||'active',rows=await supa(env,'tasks',{query:'select=*&deleted_at=is.null&order=created_at.desc'});let filtered=filterTasks(rows,a.session);if(['admin','owner'].includes(a.session.role)){if(scope==='active')filtered=filtered.filter(x=>!x.archived_at);else if(scope==='archived')filtered=filtered.filter(x=>!!x.archived_at)}return json({tasks:filtered,scope})}catch{return error(500,'Could not load tasks.')}}
+function filterTasks(rows, session) {
+  const alive = rows.filter(task => !task.deleted_at);
+  let output = [];
+  if (['admin', 'owner'].includes(session.role)) output = alive;
+  else {
+    const current = alive.filter(task => !task.archived_at);
+    if (session.role === 'agent') output = current.filter(task => task.agent_user_id === session.userId);
+    else if (session.role === 'photographer') output = current.filter(task => task.photographer_user_id === session.userId);
+    else if (session.role === 'editor') output = current.filter(task => task.editor_user_id === session.userId);
+  }
+  return output.map(task => visibleTask(task, session));
+}
 
-export async function onRequestPost({request,env}){const a=await requireSession(request,env,['admin','owner','agent']);if(a.error)return a.error;try{const b=await request.json(),tnt=await tenant(env),property=String(b.property||'').trim(),address=String(b.address||'').trim(),suburb=String(b.suburb||'').trim(),area=String(b.area||'').trim(),sv=[...new Set((Array.isArray(b.services)?b.services:[]).map(String).filter(Boolean))],idem=String(b.idempotencyKey||'').trim().slice(0,120);if(!property)return error(400,'Property name is required.');if(!address)return error(400,'Property address is required.');if(!/\b\d{4}\b/.test(address))return error(400,'Include the 4-digit Australian postcode in the property address.');if(!suburb)return error(400,'Property suburb is required.');if(!area)return error(400,'Property area is required.');if(!sv.length)return error(400,'Choose at least one service.');if(!b.photographerId)return error(422,'Choose an eligible Photographer for this job.');if(!idem)return error(400,'Booking request key is missing. Please reopen the booking form.');const existing=await taskByKey(env,tnt.id,idem);if(existing){await queueTaskHandoffs(env,existing);return json({task:visibleTask(existing,a.session),handoffs:handoffSummary(existing),reused:true})}
-const availability=await evaluateBooking(env,{photographerId:b.photographerId,area,serviceCodes:sv,startLocal:b.scheduledStart,requireActiveServices:true});if(!availability.available)return availabilityError(availability);
-let agentId=a.session.role==='agent'?a.session.userId:null;if(['admin','owner'].includes(a.session.role)){const candidate=String(b.agentId||'').trim();if(candidate){const ag=(await supa(env,'users',{query:`select=id,role_code,active&id=eq.${encodeURIComponent(candidate)}&limit=1`}))?.[0];if(!ag||ag.active===false||ag.role_code!=='agent')return error(422,'Choose a valid Agent for this property.');agentId=ag.id}else agentId=(await supa(env,'users',{query:`select=id&tenant_id=eq.${tnt.id}&role_code=eq.agent&active=eq.true&order=created_at.asc&limit=1`}))?.[0]?.id||null}if(!agentId)return error(422,'An active Agent is required before this property can be booked.');
-const num=`NL-${String(Date.now()).slice(-6)}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,rec={tenant_id:tnt.id,task_no:num,idempotency_key:idem,property_name:property,address,suburb,area,priority:'standard',status:'assigned',agent_user_id:agentId,photographer_user_id:b.photographerId,calendar_owner_user_id:b.photographerId,scheduled_start:availability.start.toISOString(),scheduled_end:availability.end.toISOString(),service_codes:sv,notes:String(b.notes||'').trim(),next_action:'Photographer needs to confirm the booking.',metadata:{source:'cloud',booking_created_at:new Date().toISOString(),created_by:a.session.userId,timezone:availability.profile.timezone||'Australia/Melbourne',buffer_before_min:availability.bufferBeforeMinutes,buffer_after_min:availability.bufferAfterMinutes,calendar_checked:availability.connected}};let t,created=true;try{t=(await supa(env,'tasks',{method:'POST',payload:rec}))?.[0]}catch(e){if(!String(e.message).includes('409'))throw e;t=await taskByKey(env,tnt.id,idem);created=false}if(!t)throw new Error('task_insert_failed');if(created)await logEvent(env,{task_id:t.id,type:'task_created',actor_user_id:a.session.userId,message:'Task created and Photographer assigned.'});await queueTaskHandoffs(env,t);const fresh=await taskById(env,t.id)||t;return json({task:visibleTask(fresh,a.session),handoffs:handoffSummary(fresh,{calendarConnected:availability.connected}),reused:!created},created?201:200)}catch{return error(500,'Could not create task.')}}
+async function taskById(env, id) {
+  return (await supa(env, 'tasks', {
+    query: `select=*&id=eq.${encodeURIComponent(id)}&deleted_at=is.null&limit=1`
+  }))?.[0] || null;
+}
+
+function availabilityError(result) {
+  const detail = {};
+  if (result.missingServices?.length) detail.missingServices = result.missingServices;
+  if (result.timeChoices?.length) {
+    detail.timeChoices = result.timeChoices;
+    detail.timeZone = result.timeZone;
+    detail.localTime = result.localTime;
+  }
+  return error(schedulingStatus(result.code), result.reason, Object.keys(detail).length ? detail : undefined);
+}
+
+function handoffSummary(task, { calendarConnected = null } = {}) {
+  return {
+    dropbox: task.dropbox_path ? 'done' : 'pending',
+    calendar: task.calendar_event_id ? 'done' : calendarConnected === false ? 'not_connected' : 'pending',
+    email: task.metadata?.assignment_email_user_id === task.photographer_user_id ? 'done' : 'pending'
+  };
+}
+
+export async function onRequestGet({ request, env }) {
+  const auth = await requireSession(request, env);
+  if (auth.error) return auth.error;
+  try {
+    const url = new URL(request.url);
+    const scope = url.searchParams.get('scope') || 'active';
+    const rows = await supa(env, 'tasks', { query: 'select=*&deleted_at=is.null&order=created_at.desc' });
+    let filtered = filterTasks(rows, auth.session);
+    if (['admin', 'owner'].includes(auth.session.role)) {
+      if (scope === 'active') filtered = filtered.filter(task => !task.archived_at);
+      else if (scope === 'archived') filtered = filtered.filter(task => Boolean(task.archived_at));
+    }
+    return json({ tasks: filtered, scope });
+  } catch {
+    return error(500, 'Could not load tasks.');
+  }
+}
+
+export async function onRequestPost({ request, env }) {
+  const auth = await requireSession(request, env, ['admin', 'owner', 'agent']);
+  if (auth.error) return auth.error;
+  try {
+    const body = await request.json();
+    const currentTenant = await tenant(env);
+    const property = String(body.property || '').trim();
+    const address = String(body.address || '').trim();
+    const suburb = String(body.suburb || '').trim();
+    const area = String(body.area || '').trim();
+    const services = [...new Set((Array.isArray(body.services) ? body.services : []).map(String).filter(Boolean))];
+    const idempotencyKey = String(body.idempotencyKey || '').trim().slice(0, 120);
+
+    if (!property) return error(400, 'Property name is required.');
+    if (!address) return error(400, 'Property address is required.');
+    if (!/\b\d{4}\b/.test(address)) return error(400, 'Include the 4-digit Australian postcode in the property address.');
+    if (!suburb) return error(400, 'Property suburb is required.');
+    if (!area) return error(400, 'Property area is required.');
+    if (!services.length) return error(400, 'Choose at least one service.');
+    if (!body.photographerId) return error(422, 'Choose an eligible Photographer for this job.');
+    if (!idempotencyKey) return error(400, 'Booking request key is missing. Please reopen the booking form.');
+
+    const availability = await evaluateBooking(env, {
+      photographerId: body.photographerId,
+      area,
+      serviceCodes: services,
+      startLocal: body.scheduledStart,
+      timeDisambiguation: body.timeDisambiguation || null,
+      requireActiveServices: true
+    });
+    if (!availability.available) return availabilityError(availability);
+
+    let agentId = auth.session.role === 'agent' ? auth.session.userId : null;
+    if (['admin', 'owner'].includes(auth.session.role)) {
+      const candidate = String(body.agentId || '').trim();
+      if (candidate) {
+        const agent = (await supa(env, 'users', {
+          query: `select=id,tenant_id,role_code,active&id=eq.${encodeURIComponent(candidate)}&limit=1`
+        }))?.[0];
+        if (!agent || agent.active === false || agent.role_code !== 'agent' || agent.tenant_id !== currentTenant.id) {
+          return error(422, 'Choose a valid Agent for this property.');
+        }
+        agentId = agent.id;
+      } else {
+        agentId = (await supa(env, 'users', {
+          query: `select=id&tenant_id=eq.${currentTenant.id}&role_code=eq.agent&active=eq.true&order=created_at.asc&limit=1`
+        }))?.[0]?.id || null;
+      }
+    }
+    if (!agentId) return error(422, 'An active Agent is required before this property can be booked.');
+
+    const taskNumber = `NL-${String(Date.now()).slice(-6)}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`;
+    const metadata = {
+      source: 'cloud',
+      requestedPriority: BOOKING_DEFAULTS.priority,
+      booking_created_at: new Date().toISOString(),
+      created_by: auth.session.userId,
+      timezone: availability.timeZone || availability.profile.timezone || 'Australia/Melbourne',
+      local_scheduled_start: availability.localTime || null,
+      utc_offset_minutes: Number.isFinite(availability.utcOffsetMinutes) ? availability.utcOffsetMinutes : null,
+      time_disambiguation: availability.timeDisambiguation || null,
+      buffer_before_min: availability.bufferBeforeMinutes,
+      buffer_after_min: availability.bufferAfterMinutes,
+      calendar_checked: availability.connected
+    };
+
+    let result;
+    try {
+      result = await supa(env, 'rpc/northlight_create_booking', {
+        method: 'POST',
+        payload: {
+          p_tenant_id: currentTenant.id,
+          p_actor: auth.session.userId,
+          p_task_no: taskNumber,
+          p_idempotency_key: idempotencyKey,
+          p_property_name: property,
+          p_address: address,
+          p_suburb: suburb,
+          p_area: area,
+          p_agent_user_id: agentId,
+          p_photographer_user_id: body.photographerId,
+          p_scheduled_start: availability.start.toISOString(),
+          p_scheduled_end: availability.end.toISOString(),
+          p_service_codes: services,
+          p_notes: String(body.notes || '').trim(),
+          p_metadata: metadata
+        }
+      });
+    } catch (exception) {
+      const message = String(exception?.message || '');
+      if (isAtomicScheduleConflict(exception)) {
+        return error(409, 'That Photographer was booked by another request while this booking was being saved. Choose another time.');
+      }
+      if (/invalid_agent/i.test(message)) return error(422, 'Choose a valid Agent for this property.');
+      if (/invalid_photographer/i.test(message)) return error(422, 'Choose an active Photographer for this property.');
+      if (/invalid_booking/i.test(message)) return error(400, 'The booking details are incomplete or invalid.');
+      if (/permission_denied/i.test(message)) return error(403, 'You do not have permission to create this booking.');
+      if (/(?:23505|duplicate key value)/i.test(message)) {
+        return error(409, 'Northlight could not reserve a unique booking number. Retry this booking once.');
+      }
+      throw exception;
+    }
+
+    const task = result?.task;
+    if (!task?.id) throw new Error('task_insert_failed');
+    await queueTaskHandoffs(env, task);
+    const fresh = await taskById(env, task.id) || task;
+    const reused = Boolean(result.reused);
+    return json({
+      task: visibleTask(fresh, auth.session),
+      handoffs: handoffSummary(fresh, { calendarConnected: availability.connected }),
+      reused
+    }, reused ? 200 : 201);
+  } catch {
+    return error(500, 'Could not create task.');
+  }
+}

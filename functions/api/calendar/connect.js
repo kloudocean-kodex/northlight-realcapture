@@ -1,3 +1,38 @@
-import{requireSession,signedState,error}from'../../_lib/core.js';
+import { requireSession, error } from '../../_lib/core.js';
+import { beginOAuthAuthorization } from '../../_lib/oauth-security.js';
+import { buildProviderAuthorizationUrl } from '../../_lib/oauth-lifecycle.js';
 
-export async function onRequestGet({request,env}){const a=await requireSession(request,env,['photographer']);if(a.error)return a.error;try{const origin=new URL(request.url).origin,state=await signedState({provider:'google-user',userId:a.session.userId},env.SESSION_SECRET),q=new URLSearchParams({client_id:env.GOOGLE_CLIENT_ID,redirect_uri:`${origin}/oauth/google-user/callback`,response_type:'code',scope:'openid email https://www.googleapis.com/auth/calendar',access_type:'offline',prompt:'consent',state});return Response.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${q}`,302)}catch{return error(500,'Could not start Google Calendar connection.')}}
+export async function onRequestGet({ request, env }) {
+  const auth = await requireSession(request, env, ['photographer']);
+  if (auth.error) return auth.error;
+  try {
+    const url = new URL(request.url);
+    const authorization = await beginOAuthAuthorization(env, {
+      request,
+      provider: 'google-user',
+      actorUserId: auth.session.userId,
+      returnPath: url.searchParams.get('return_to') || '/'
+    });
+    const location = buildProviderAuthorizationUrl(env, {
+      provider: 'google-user',
+      origin: authorization.origin,
+      state: authorization.state,
+      codeChallenge: authorization.codeChallenge
+    });
+    return new Response(null, {
+      status: 302,
+      headers: {
+        location,
+        'set-cookie': authorization.cookie,
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+        'x-content-type-options': 'nosniff'
+      }
+    });
+  } catch (exception) {
+    const configuration = /not_configured|oauth_(?:canonical|origin|insecure)/.test(String(exception?.message || ''));
+    return error(configuration ? 409 : 500, configuration
+      ? 'Google Calendar connection is not configured safely yet.'
+      : 'Could not start Google Calendar connection.');
+  }
+}

@@ -1,2 +1,23 @@
-import{requireSession,error,json,googleRequest,dropboxRequest,saveIntegration,accessToken}from'../../../_lib/core.js';
-export async function onRequestPost({request,env,params}){const a=await requireSession(request,env,['admin','owner']);if(a.error)return a.error;try{const p=String(params.provider||'');if(p==='google'){const d=await googleRequest(env,'/oauth2/v2/userinfo');await saveIntegration(env,'google',{status:'connected',account_label:d.email,last_verified_at:new Date().toISOString()});return json({message:`Connected as ${d.email}`})}if(p==='dropbox'){const d=await dropboxRequest(env,'users/get_current_account',null);await saveIntegration(env,'dropbox',{status:'connected',account_label:d.name?.display_name||d.email,last_verified_at:new Date().toISOString(),metadata:{account_id:d.account_id}});return json({message:`Connected to ${d.name?.display_name||d.email}`})}if(p==='xero'){if(!env.XERO_CLIENT_ID||!env.XERO_CLIENT_SECRET)return error(409,'Xero is not configured yet.');const token=await accessToken(env,'xero'),r=await fetch('https://api.xero.com/connections',{headers:{authorization:`Bearer ${token}`}}),d=await r.json();if(!r.ok)throw new Error(`xero_${r.status}`);const c=d[0];await saveIntegration(env,'xero',{status:'connected',account_label:c?.tenantName||'Xero',last_verified_at:new Date().toISOString(),metadata:{xero_tenant_id:c?.tenantId}});return json({message:c?`Connected to ${c.tenantName}`:'Xero connected'})}return error(404,'Unknown integration.')}catch(e){return error(502,'Integration verification failed.',e.message)}}
+import { requireSession, error, json } from '../../../_lib/core.js';
+import { verifySharedOAuthConnection } from '../../../_lib/oauth-lifecycle.js';
+
+const PROVIDERS = new Set(['google', 'dropbox', 'xero']);
+
+export async function onRequestPost({ request, env, params }) {
+  const auth = await requireSession(request, env, ['admin', 'owner']);
+  if (auth.error) return auth.error;
+  const provider = String(params.provider || '');
+  if (!PROVIDERS.has(provider)) return error(404, 'Unknown integration.');
+  try {
+    const { account } = await verifySharedOAuthConnection(env, provider);
+    const label = provider === 'google' ? `Connected as ${account.label}`
+      : provider === 'dropbox' ? `Connected to ${account.label}`
+        : `Connected to ${account.label}`;
+    return json({ message: label });
+  } catch (exception) {
+    if (/generation_changed/.test(String(exception?.message || ''))) {
+      return error(409, 'The integration changed during verification. Reload its status and try again.');
+    }
+    return error(502, 'Integration verification failed safely.');
+  }
+}

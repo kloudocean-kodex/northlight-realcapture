@@ -1,2 +1,44 @@
-import{readState,storeOAuth}from'../../_lib/core.js';
-export async function onRequestGet({request,env}){try{const u=new URL(request.url),state=await readState(u.searchParams.get('state'),env.SESSION_SECRET),code=u.searchParams.get('code');if(state.provider!=='google')throw new Error('invalid_google_state');if(!code)throw new Error('google_code_missing');const r=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({code,client_id:env.GOOGLE_CLIENT_ID,client_secret:env.GOOGLE_CLIENT_SECRET,redirect_uri:`${u.origin}/oauth/google/callback`,grant_type:'authorization_code'})}),d=await r.json();if(!r.ok)throw new Error('google_token_exchange_failed');const p=await fetch('https://www.googleapis.com/oauth2/v2/userinfo',{headers:{authorization:`Bearer ${d.access_token}`}}),me=await p.json();if(!p.ok)throw new Error('google_profile_failed');await storeOAuth(env,'google',{...d,account_label:me.email||'Google Workspace',metadata:{email:me.email}});return Response.redirect(`${u.origin}/?connected=google`,302)}catch{return new Response('Google connection failed. Return to Northlight and try again.',{status:400,headers:{'content-type':'text/plain; charset=utf-8','cache-control':'no-store'}})}}
+import { requireSession } from '../../_lib/core.js';
+import {
+  consumeOAuthAuthorization,
+  oauthAuthorizationCode,
+  oauthFailure,
+  oauthOrigin,
+  oauthSuccess
+} from '../../_lib/oauth-security.js';
+import {
+  commitSharedOAuth,
+  exchangeAuthorizationCode,
+  googleAccount
+} from '../../_lib/oauth-lifecycle.js';
+
+export async function onRequestGet({ request, env }) {
+  const auth = await requireSession(request, env, ['admin', 'owner']);
+  if (auth.error) return oauthFailure('google', auth.error.status === 403 ? 403 : 401);
+  try {
+    const url = new URL(request.url);
+    const authorization = await consumeOAuthAuthorization(env, {
+      request,
+      provider: 'google',
+      actorUserId: auth.session.userId,
+      state: url.searchParams.get('state')
+    });
+    const token = await exchangeAuthorizationCode(env, {
+      provider: 'google',
+      origin: oauthOrigin(request, env),
+      code: oauthAuthorizationCode(url),
+      codeVerifier: authorization.codeVerifier
+    });
+    const account = await googleAccount(token.access_token);
+    await commitSharedOAuth(env, {
+      provider: 'google',
+      token,
+      account,
+      actorUserId: auth.session.userId,
+      expectedGeneration: authorization.connectionGeneration
+    });
+    return oauthSuccess(request, env, 'google', authorization.returnPath);
+  } catch {
+    return oauthFailure('google');
+  }
+}

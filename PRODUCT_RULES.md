@@ -63,6 +63,9 @@ Northlight owns **what happens next**. Specialist systems remain authoritative f
 - Editor: assigned RAW/reference + working edits/review-ready output; no finance.
 - File access must be enforced server-side. Hiding a button is never authorization.
 - Do not create permanent public Dropbox task-folder links. Use role-checked temporary links.
+- `03_FINAL` is not an approval boundary. Agent-visible media must come only from the task's selected immutable release manifest.
+- Publish review media into a versioned release, verify every Dropbox file ID, revision, content hash and size, then atomically select that release. Never delete or mutate the prior approved release while publishing another.
+- Revalidate approved provider identity before issuing a temporary link; fail closed if a file was changed, moved or removed after approval.
 - Large media uploads go browser → provider directly; do not proxy large media through Cloudflare Functions.
 - A multi-service task cannot advance from source → editing → review → delivery until required media coverage exists for each requested service.
 - Dropbox reconciliation must batch database work; never perform several backend requests per media file in a Worker invocation.

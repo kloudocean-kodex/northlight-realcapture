@@ -1,0 +1,158 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { createIntegrationDispatcher, isSystemJob } from '../workers/integration-dispatcher/src/index.js';
+
+const DROPBOX_JOB_IDS = [
+  '11111111-1111-4111-8111-111111111111',
+  '22222222-2222-4222-8222-222222222222',
+  '33333333-3333-4333-8333-333333333333',
+];
+
+function message(body, id = crypto.randomUUID()) {
+  const state = { acked: 0, retried: 0, retryOptions: [] };
+  return {
+    id,
+    attempts: 1,
+    body,
+    ack() { state.acked += 1; },
+    retry(options) { state.retried += 1; state.retryOptions.push(options); },
+    state,
+  };
+}
+
+test('system-job queue schema rejects malformed or over-privileged messages', () => {
+  assert.equal(isSystemJob({ version: 1, type: 'task_handoff', jobId: 'h1', taskId: 't1', kind: 'calendar' }), true);
+  assert.equal(isSystemJob({ version: 1, type: 'calendar_cleanup', jobId: 'c1', taskId: 't1' }), true);
+  assert.equal(isSystemJob({ version: 1, type: 'dropbox_sync', jobId: DROPBOX_JOB_IDS[0], webhookAt: '2026-08-21T12:00:00.000Z' }), true);
+  assert.equal(isSystemJob({ version: 1, type: 'dropbox_sync', jobId: 'not-a-uuid', webhookAt: null }), false);
+  assert.equal(isSystemJob({ version: 1, type: 'dropbox_sync', jobId: DROPBOX_JOB_IDS[0], webhookAt: 'not-a-date' }), false);
+  assert.equal(isSystemJob({ version: 1, type: 'task_handoff', jobId: 'h1', taskId: 't1', kind: 'arbitrary_fetch' }), false);
+  assert.equal(isSystemJob({ version: 2, type: 'task_handoff', jobId: 'h1', taskId: 't1', kind: 'email' }), false);
+  assert.equal(isSystemJob(null), false);
+});
+
+test('Dropbox queue work retries with bounded delay while completed work is acknowledged', async () => {
+  const seen = [];
+  const dispatcher = createIntegrationDispatcher({
+    runDropbox: async (_env, options) => {
+      seen.push(options);
+      if (seen.length === 1) throw new Error('provider unavailable');
+      if (seen.length === 2) return { busy: true, retryAfterSeconds: 9999 };
+      return { status: 'processed' };
+    },
+  });
+  const messages = [
+    message({ version: 1, type: 'dropbox_sync', jobId: DROPBOX_JOB_IDS[0], webhookAt: '2026-08-21T12:00:00.000Z' }, 'd1'),
+    message({ version: 1, type: 'dropbox_sync', jobId: DROPBOX_JOB_IDS[1], webhookAt: null }, 'd2'),
+    message({ version: 1, type: 'dropbox_sync', jobId: DROPBOX_JOB_IDS[2] }, 'd3'),
+  ];
+
+  await dispatcher.queue({ messages }, {});
+
+  assert.deepEqual(seen, [
+    { webhookAt: '2026-08-21T12:00:00.000Z' },
+    { webhookAt: null },
+    { webhookAt: null },
+  ]);
+  assert.deepEqual(messages.map(item => item.state.acked), [0, 0, 1]);
+  assert.deepEqual(messages.map(item => item.state.retried), [1, 1, 0]);
+  assert.equal(messages[0].state.retryOptions[0].delaySeconds, 30);
+  assert.equal(messages[1].state.retryOptions[0].delaySeconds, 300);
+});
+
+test('consumer handles every message independently and leaves retry timing to the durable outbox', async () => {
+  const seen = [];
+  const dispatcher = createIntegrationDispatcher({
+    runHandoff: async (_env, taskId, kind) => {
+      seen.push(`${taskId}:${kind}`);
+      if (kind === 'email') throw new Error('provider unavailable');
+      return { status: 'done' };
+    },
+    runCleanup: async (_env, jobId) => {
+      seen.push(`cleanup:${jobId}`);
+      return { status: 'done' };
+    },
+  });
+  const messages = [
+    message({ version: 1, type: 'task_handoff', jobId: 'h1', taskId: 't1', kind: 'calendar' }, 'm1'),
+    message({ version: 1, type: 'task_handoff', jobId: 'h2', taskId: 't2', kind: 'email' }, 'm2'),
+    message({ version: 1, type: 'calendar_cleanup', jobId: 'c1', taskId: 't3' }, 'm3'),
+    message({ version: 1, type: 'unknown', jobId: 'bad', taskId: 't4' }, 'm4'),
+  ];
+
+  await dispatcher.queue({ messages }, {});
+
+  assert.deepEqual(seen, ['t1:calendar', 't2:email', 'cleanup:c1']);
+  for (const item of messages) {
+    assert.equal(item.state.acked, 1);
+    assert.equal(item.state.retried, 0);
+  }
+});
+
+test('cron dispatch is tracked by waitUntil and awaits the durable claim/enqueue result', async () => {
+  let dispatched = 0;
+  let pending;
+  const dispatcher = createIntegrationDispatcher({
+    dispatch: async (_env, options) => {
+      assert.equal(options.limit, 50);
+      dispatched += 1;
+      return { claimed: 3, enqueued: 3 };
+    },
+  });
+  const ctx = { waitUntil(value) { pending = value; } };
+
+  await dispatcher.scheduled({ scheduledTime: 123 }, {}, ctx);
+  assert.ok(pending instanceof Promise);
+  await pending;
+  assert.equal(dispatched, 1);
+});
+
+test('database dispatch uses expiring leases and skip-locked claims for both job tables', async () => {
+  const sql = await readFile(new URL('../supabase/migrations/20260819203000_northlight_durable_dispatch_queue.sql', import.meta.url), 'utf8');
+  assert.match(sql, /processing_lease_until timestamptz/);
+  assert.match(sql, /dispatch_lease_until timestamptz/);
+  assert.match(sql, /for update skip locked/gi);
+  assert.match(sql, /northlight_reap_stale_system_jobs/);
+  assert.match(sql, /northlight_claim_task_handoff_dispatch/);
+  assert.match(sql, /northlight_claim_calendar_cleanup_dispatch/);
+  assert.match(sql, /next_attempt_at = case when p_sent then now\(\) \+ interval '15 minutes'/);
+});
+
+test('Cloudflare queue configuration is pinned, observable, bounded, and dead-lettered', async () => {
+  const pages = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
+  const worker = JSON.parse(await readFile(new URL('../workers/integration-dispatcher/wrangler.jsonc', import.meta.url), 'utf8'));
+
+  assert.equal(pages.compatibility_date, '2026-08-21');
+  assert.deepEqual(pages.compatibility_flags, ['nodejs_compat']);
+  assert.equal(pages.queues.producers[0].binding, 'TASK_HANDOFF_QUEUE');
+  assert.equal(pages.queues.producers[0].queue, 'northlight-task-handoffs');
+  assert.equal(pages.observability.enabled, true);
+  assert.equal(pages.observability.traces.enabled, true);
+
+  assert.equal(worker.main, 'src/index.js');
+  assert.equal(worker.compatibility_date, '2026-08-21');
+  assert.deepEqual(worker.compatibility_flags, ['nodejs_compat']);
+  assert.equal(worker.queues.producers[0].binding, 'TASK_HANDOFF_QUEUE');
+  const consumer = worker.queues.consumers[0];
+  assert.deepEqual({
+    queue: consumer.queue,
+    maxBatchSize: consumer.max_batch_size,
+    maxBatchTimeout: consumer.max_batch_timeout,
+    maxRetries: consumer.max_retries,
+    retryDelay: consumer.retry_delay,
+    deadLetterQueue: consumer.dead_letter_queue,
+    maxConcurrency: consumer.max_concurrency,
+  }, {
+    queue: 'northlight-task-handoffs',
+    maxBatchSize: 10,
+    maxBatchTimeout: 5,
+    maxRetries: 5,
+    retryDelay: 60,
+    deadLetterQueue: 'northlight-task-handoffs-dlq',
+    maxConcurrency: 5,
+  });
+  assert.deepEqual(worker.triggers.crons, ['*/1 * * * *']);
+  assert.equal(worker.observability.enabled, true);
+  assert.equal(worker.observability.traces.enabled, true);
+});

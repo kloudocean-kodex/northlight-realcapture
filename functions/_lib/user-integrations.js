@@ -1,13 +1,116 @@
-import{seal,unseal,supa,tenant}from'./core.js';
+import { providerFailure, seal, unseal, supa, tenant } from './core.js';
+import { refreshWithLease, usableAccessToken } from './oauth-refresh.js';
 
-async function formToken(url,params,headers={}){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded',...headers},body:new URLSearchParams(params)}),d=await r.json();if(!r.ok)throw new Error(`oauth_${r.status}:${JSON.stringify(d)}`);return d}
+async function formToken(url, params, headers = {}) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+    body: new URLSearchParams(params)
+  });
+  const text = await response.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
+  if (!response.ok) throw providerFailure('oauth', response.status, data, 'refresh');
+  return data;
+}
 
-export async function userIntegration(env,userId,provider){const t=await tenant(env),x=await supa(env,'user_integrations',{query:`select=*&tenant_id=eq.${t.id}&user_id=eq.${encodeURIComponent(userId)}&provider=eq.${encodeURIComponent(provider)}&limit=1`});return x?.[0]||null}
+async function userOAuthMetadata(env, { access_token, refresh_token, expires_in, metadata = {} }) {
+  if (!access_token) throw new Error('oauth_access_token_missing');
+  const next = {
+    ...metadata,
+    access_token: await seal(access_token, env.TOKEN_ENCRYPTION_KEY),
+    access_expires_at: Date.now() + Number(expires_in || 3600) * 1000 - 60000
+  };
+  if (refresh_token) next.refresh_token = await seal(refresh_token, env.TOKEN_ENCRYPTION_KEY);
+  return next;
+}
 
-export async function saveUserIntegration(env,userId,provider,patch={}){const t=await tenant(env),old=await userIntegration(env,userId,provider),record={tenant_id:t.id,user_id:userId,provider,status:patch.status||old?.status||'not_connected',account_label:patch.account_label??old?.account_label??null,last_verified_at:patch.last_verified_at??old?.last_verified_at??null,metadata:{...(old?.metadata||{}),...(patch.metadata||{})},updated_at:new Date().toISOString()};const r=await supa(env,'user_integrations',{method:'POST',query:'on_conflict=tenant_id,user_id,provider',payload:record,prefer:'resolution=merge-duplicates,return=representation'});return r?.[0]||record}
+export async function userIntegration(env, userId, provider) {
+  const currentTenant = await tenant(env);
+  const rows = await supa(env, 'user_integrations', {
+    query: `select=*&tenant_id=eq.${currentTenant.id}&user_id=eq.${encodeURIComponent(userId)}&provider=eq.${encodeURIComponent(provider)}&limit=1`
+  });
+  return rows?.[0] || null;
+}
 
-export async function storeUserOAuth(env,userId,provider,{access_token,refresh_token,expires_in,account_label,metadata={}}){const m={...metadata,access_token:await seal(access_token,env.TOKEN_ENCRYPTION_KEY),access_expires_at:Date.now()+Number(expires_in||3600)*1000-60000};if(refresh_token)m.refresh_token=await seal(refresh_token,env.TOKEN_ENCRYPTION_KEY);return saveUserIntegration(env,userId,provider,{status:'connected',account_label,last_verified_at:new Date().toISOString(),metadata:m})}
+async function refreshUserGoogle(env, lease) {
+  const refreshToken = await unseal(lease.metadata?.refresh_token, env.TOKEN_ENCRYPTION_KEY);
+  if (!refreshToken) throw new Error('google_refresh_token_missing');
+  const data = await formToken('https://oauth2.googleapis.com/token', {
+    client_id: env.GOOGLE_CALENDAR_CLIENT_ID || env.GOOGLE_CLIENT_ID,
+    client_secret: env.GOOGLE_CALENDAR_CLIENT_SECRET || env.GOOGLE_CLIENT_SECRET,
+    refresh_token: refreshToken,
+    grant_type: 'refresh_token'
+  });
+  return { ...data, refresh_token: refreshToken };
+}
 
-export async function userAccessToken(env,userId,provider){const i=await userIntegration(env,userId,provider);if(!i||i.status!=='connected')throw new Error(`${provider}_not_connected`);const m=i.metadata||{};if(m.access_token&&Number(m.access_expires_at||0)>Date.now()+15000)return unseal(m.access_token,env.TOKEN_ENCRYPTION_KEY);if(provider!=='google')throw new Error(`${provider}_refresh_not_supported`);const rt=await unseal(m.refresh_token,env.TOKEN_ENCRYPTION_KEY);if(!rt)throw new Error('google_refresh_token_missing');const d=await formToken('https://oauth2.googleapis.com/token',{client_id:env.GOOGLE_CLIENT_ID,client_secret:env.GOOGLE_CLIENT_SECRET,refresh_token:rt,grant_type:'refresh_token'});await storeUserOAuth(env,userId,'google',{...d,refresh_token:rt,account_label:i.account_label,metadata:{...m,refresh_token:m.refresh_token}});return d.access_token}
+export async function userAccessToken(env, userId, provider) {
+  const current = await userIntegration(env, userId, provider);
+  if (!current || current.status !== 'connected') throw new Error(`${provider}_not_connected`);
+  const usable = await usableAccessToken(current, value => unseal(value, env.TOKEN_ENCRYPTION_KEY));
+  if (usable) return usable;
+  if (provider !== 'google') throw new Error(`${provider}_refresh_not_supported`);
 
-export async function userGoogleRequest(env,userId,path,opt={}){const token=await userAccessToken(env,userId,'google'),r=await fetch(`https://www.googleapis.com${path}`,{...opt,headers:{authorization:`Bearer ${token}`,'content-type':'application/json',...(opt.headers||{})}}),txt=await r.text();let d={};try{d=txt?JSON.parse(txt):{}}catch{d={raw:txt}}if(!r.ok)throw new Error(`google_${r.status}:${JSON.stringify(d)}`);return d}
+  const currentTenant = await tenant(env);
+  const owner = crypto.randomUUID();
+  return refreshWithLease({
+    current,
+    decode: value => unseal(value, env.TOKEN_ENCRYPTION_KEY),
+    claim: () => supa(env, 'rpc/northlight_claim_user_integration_refresh', {
+      method: 'POST',
+      payload: {
+        p_tenant_id: currentTenant.id,
+        p_user_id: userId,
+        p_provider: provider,
+        p_owner: owner,
+        p_lease_seconds: 60
+      }
+    }),
+    read: () => userIntegration(env, userId, provider),
+    refreshProvider: lease => refreshUserGoogle(env, lease),
+    finish: async (lease, token) => {
+      const metadata = await userOAuthMetadata(env, {
+        ...token,
+        metadata: { ...(lease.metadata || {}) }
+      });
+      return supa(env, 'rpc/northlight_finish_user_integration_refresh', {
+        method: 'POST',
+        payload: {
+          p_tenant_id: currentTenant.id,
+          p_user_id: userId,
+          p_provider: provider,
+          p_owner: owner,
+          p_generation: Number(lease.refresh_generation || 0),
+          p_metadata: metadata
+        }
+      });
+    },
+    release: () => supa(env, 'rpc/northlight_release_user_integration_refresh', {
+      method: 'POST',
+      payload: {
+        p_tenant_id: currentTenant.id,
+        p_user_id: userId,
+        p_provider: provider,
+        p_owner: owner
+      }
+    })
+  });
+}
+
+export async function userGoogleRequest(env, userId, path, options = {}) {
+  const token = await userAccessToken(env, userId, 'google');
+  const response = await fetch(`https://www.googleapis.com${path}`, {
+    ...options,
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      ...(options.headers || {})
+    }
+  });
+  const text = await response.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
+  if (!response.ok) throw providerFailure('google', response.status, data);
+  return data;
+}
