@@ -8,6 +8,7 @@ const DROPBOX_JOB_IDS = [
   '22222222-2222-4222-8222-222222222222',
   '33333333-3333-4333-8333-333333333333',
 ];
+const CALENDAR_USER_ID = '44444444-4444-4444-8444-444444444444';
 
 function message(body, id = crypto.randomUUID()) {
   const state = { acked: 0, retried: 0, retryOptions: [] };
@@ -25,8 +26,40 @@ test('system-job queue schema rejects malformed or over-privileged messages', ()
   assert.equal(isSystemJob({ version: 1, type: 'task_handoff', jobId: 'h1', taskId: 't1', kind: 'calendar' }), true);
   assert.equal(isSystemJob({ version: 1, type: 'calendar_cleanup', jobId: 'c1', taskId: 't1' }), true);
   assert.equal(isSystemJob({ version: 1, type: 'dropbox_sync', jobId: DROPBOX_JOB_IDS[0], webhookAt: '2026-08-21T12:00:00.000Z' }), true);
+  assert.equal(isSystemJob({
+    version: 1,
+    type: 'calendar_sync',
+    jobId: DROPBOX_JOB_IDS[1],
+    userId: CALENDAR_USER_ID,
+    calendarId: 'primary',
+    trigger: 'webhook',
+  }), true);
   assert.equal(isSystemJob({ version: 1, type: 'dropbox_sync', jobId: 'not-a-uuid', webhookAt: null }), false);
   assert.equal(isSystemJob({ version: 1, type: 'dropbox_sync', jobId: DROPBOX_JOB_IDS[0], webhookAt: 'not-a-date' }), false);
+  assert.equal(isSystemJob({
+    version: 1,
+    type: 'calendar_sync',
+    jobId: DROPBOX_JOB_IDS[1],
+    userId: 'not-a-user-uuid',
+    calendarId: 'primary',
+    trigger: 'webhook',
+  }), false);
+  assert.equal(isSystemJob({
+    version: 1,
+    type: 'calendar_sync',
+    jobId: DROPBOX_JOB_IDS[1],
+    userId: CALENDAR_USER_ID,
+    calendarId: 'primary\nforged',
+    trigger: 'webhook',
+  }), false);
+  assert.equal(isSystemJob({
+    version: 1,
+    type: 'calendar_sync',
+    jobId: DROPBOX_JOB_IDS[1],
+    userId: CALENDAR_USER_ID,
+    calendarId: 'primary',
+    trigger: 'arbitrary_fetch',
+  }), false);
   assert.equal(isSystemJob({ version: 1, type: 'task_handoff', jobId: 'h1', taskId: 't1', kind: 'arbitrary_fetch' }), false);
   assert.equal(isSystemJob({ version: 2, type: 'task_handoff', jobId: 'h1', taskId: 't1', kind: 'email' }), false);
   assert.equal(isSystemJob(null), false);
@@ -61,7 +94,57 @@ test('Dropbox queue work retries with bounded delay while completed work is ackn
   assert.equal(messages[1].state.retryOptions[0].delaySeconds, 300);
 });
 
-test('consumer handles every message independently and leaves retry timing to the durable outbox', async () => {
+test('Calendar sync queue work is consumed, lease-busy work is delayed, and provider failures retry', async () => {
+  const seen = [];
+  const dispatcher = createIntegrationDispatcher({
+    runCalendar: async (_env, userId, calendarId) => {
+      seen.push({ userId, calendarId });
+      if (seen.length === 1) throw new Error('google_503_backend_error_private_detail');
+      if (seen.length === 2) return { busy: true, retryAfterSeconds: 9999 };
+      return { kind: 'incremental' };
+    },
+  });
+  const messages = [
+    message({
+      version: 1,
+      type: 'calendar_sync',
+      jobId: DROPBOX_JOB_IDS[0],
+      userId: CALENDAR_USER_ID,
+      calendarId: 'primary',
+      trigger: 'webhook',
+    }, 'c1'),
+    message({
+      version: 1,
+      type: 'calendar_sync',
+      jobId: DROPBOX_JOB_IDS[1],
+      userId: CALENDAR_USER_ID,
+      calendarId: 'work@example.com',
+      trigger: 'watch_activation',
+    }, 'c2'),
+    message({
+      version: 1,
+      type: 'calendar_sync',
+      jobId: DROPBOX_JOB_IDS[2],
+      userId: CALENDAR_USER_ID,
+      calendarId: 'primary',
+      trigger: 'maintenance',
+    }, 'c3'),
+  ];
+
+  await dispatcher.queue({ messages }, {});
+
+  assert.deepEqual(seen, [
+    { userId: CALENDAR_USER_ID, calendarId: 'primary' },
+    { userId: CALENDAR_USER_ID, calendarId: 'work@example.com' },
+    { userId: CALENDAR_USER_ID, calendarId: 'primary' },
+  ]);
+  assert.deepEqual(messages.map(item => item.state.acked), [0, 0, 1]);
+  assert.deepEqual(messages.map(item => item.state.retried), [1, 1, 0]);
+  assert.equal(messages[0].state.retryOptions[0].delaySeconds, 30);
+  assert.equal(messages[1].state.retryOptions[0].delaySeconds, 300);
+});
+
+test('consumer handles every outbox message independently and leaves retry timing to the durable outbox', async () => {
   const seen = [];
   const dispatcher = createIntegrationDispatcher({
     runHandoff: async (_env, taskId, kind) => {
@@ -90,22 +173,53 @@ test('consumer handles every message independently and leaves retry timing to th
   }
 });
 
-test('cron dispatch is tracked by waitUntil and awaits the durable claim/enqueue result', async () => {
+test('cron awaits durable outbox dispatch and bounded Calendar watch maintenance with canonical origin', async () => {
   let dispatched = 0;
-  let pending;
+  let maintained = 0;
   const dispatcher = createIntegrationDispatcher({
     dispatch: async (_env, options) => {
       assert.equal(options.limit, 50);
       dispatched += 1;
       return { claimed: 3, enqueued: 3 };
     },
+    maintainWatches: async (_env, origin, options) => {
+      assert.equal(origin, 'https://portal.example');
+      assert.deepEqual(options, { limit: 10, runtimeMs: 20_000 });
+      maintained += 1;
+      return { checked: 2, renewed: 1, synced: 0, failed: 0 };
+    },
+    resolveOrigin: currentEnv => {
+      assert.equal(currentEnv.PUBLIC_ORIGIN, 'https://portal.example');
+      return currentEnv.PUBLIC_ORIGIN;
+    },
   });
-  const ctx = { waitUntil(value) { pending = value; } };
+  const ctx = { waitUntil() { throw new Error('scheduled handler must await its bounded work directly'); } };
 
-  await dispatcher.scheduled({ scheduledTime: 123 }, {}, ctx);
-  assert.ok(pending instanceof Promise);
-  await pending;
+  await dispatcher.scheduled(
+    { scheduledTime: 123, cron: '*/1 * * * *' },
+    { PUBLIC_ORIGIN: 'https://portal.example' },
+    ctx,
+  );
   assert.equal(dispatched, 1);
+  assert.equal(maintained, 1);
+});
+
+test('cron attempts both maintenance surfaces and fails the invocation if either one fails', async () => {
+  let maintained = 0;
+  const dispatcher = createIntegrationDispatcher({
+    dispatch: async () => { throw new Error('database unavailable'); },
+    maintainWatches: async () => {
+      maintained += 1;
+      return { checked: 0 };
+    },
+    resolveOrigin: () => 'https://portal.example',
+  });
+
+  await assert.rejects(
+    dispatcher.scheduled({ scheduledTime: 123, cron: '*/1 * * * *' }, {}),
+    /scheduled_maintenance_failed/,
+  );
+  assert.equal(maintained, 1);
 });
 
 test('database dispatch uses expiring leases and skip-locked claims for both job tables', async () => {
