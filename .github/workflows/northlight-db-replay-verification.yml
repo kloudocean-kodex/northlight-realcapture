@@ -38,18 +38,18 @@ jobs:
       - name: Fetch exact secret-scanned replay text from shared evidence Drive
         run: |
           set -euo pipefail
-          replay_url='https://drive.usercontent.google.com/download?id=1OsrQvKAAxPzMElVOwOOzp9A3dNFkrqL2&export=download&confirm=t'
-          manifest_url='https://drive.usercontent.google.com/download?id=1oSY8uoae6sBZd5fpBGbgY4P7W3oSDZdh&export=download&confirm=t'
+          replay_url='https://drive.usercontent.google.com/download?id=1TDdOtrPtUedSxIa00bTahkSjZHl5yGhj&export=download&confirm=t'
+          manifest_url='https://drive.usercontent.google.com/download?id=1GjJGxuWlph0g3QSggZmecDF1I57nz8_g&export=download&confirm=t'
           curl --location --fail --silent --show-error --max-time 60 "$replay_url" -o /tmp/northlight-db-replay.sql
           curl --location --fail --silent --show-error --max-time 30 "$manifest_url" -o /tmp/northlight-db-replay-source-manifest.json
-          test "$(wc -c </tmp/northlight-db-replay.sql)" -eq 387100
-          test "$(wc -c </tmp/northlight-db-replay-source-manifest.json)" -eq 10724
+          test "$(wc -c </tmp/northlight-db-replay.sql)" -eq 388496
+          test "$(wc -c </tmp/northlight-db-replay-source-manifest.json)" -eq 10846
 
       - name: Verify replay provenance
         run: |
           set -euo pipefail
-          echo '6d0e27e8731204f60df7bce19298d4dc1b3bc8c1dbe5244fdf6b8a8a21dac3fe  /tmp/northlight-db-replay.sql' | sha256sum --check --strict
-          echo '6d9952f7b59e675f3b0ead080382b10f407519d90a783e1de95edabae5b1dd4f  /tmp/northlight-db-replay-source-manifest.json' | sha256sum --check --strict
+          echo 'b62627054552ee01a7558f8be656240cd7e1cd3aaac6287b49120441f4c8e067  /tmp/northlight-db-replay.sql' | sha256sum --check --strict
+          echo '1d8cd1f67d94e9ce863e89f811cfe912cad3464dcb7e4d4bbd98c0a95e0d7cca  /tmp/northlight-db-replay-source-manifest.json' | sha256sum --check --strict
           node -e "const fs=require('fs'),d=JSON.parse(fs.readFileSync('/tmp/northlight-db-replay-source-manifest.json')); if(d.sourceCheckpoint!=='5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5'||d.files.length!==51) process.exit(1); console.log('Replay manifest:', d.files.length, 'ordered inputs from checkpoint', d.sourceCheckpoint);"
 
       - name: Verify PostgreSQL tools
@@ -58,6 +58,9 @@ jobs:
           psql --version
           pg_dump --version
           pg_restore --version
+          server_version="$(psql "$DATABASE_URL" -X -Atqc 'show server_version;')"
+          echo "PostgreSQL server: $server_version"
+          case "$server_version" in 17.*) ;; *) echo "::error::Expected PostgreSQL 17 server"; exit 1;; esac
 
       - name: Execute complete clean-room replay and contracts
         run: psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f /tmp/northlight-db-replay.sql
