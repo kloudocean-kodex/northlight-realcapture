@@ -14,14 +14,13 @@ permissions:
 
 jobs:
   authoritative-baseline:
-    name: Baseline exact remediation checkpoint
+    name: Baseline exact remediation head
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      EXPECTED_HEAD: 5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5
-      EXPECTED_PARENT: 1160cc20044b26a0017df1eb281198b416b9735d
-      EXPECTED_TREE: 9d2058d9f68b3bf8dac6755d94820cb6aaacabf2
-      EXPECTED_BASELINE_TREE: f3827ce4c8107173e04044d9fe9b65e3b2f026f9
+      EXPECTED_HEAD: 7a6947fa763b7aec169fc3f5b079494a00f49d93
+      EXPECTED_PARENT: 5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5
+      EXPECTED_PARENT_TREE: 9d2058d9f68b3bf8dac6755d94820cb6aaacabf2
       EXPECTED_PRODUCTION: 1c9696a463c2d12acf5b5ffe839bd8aa9d75f80f
     steps:
       - name: Checkout authoritative remediation branch
@@ -30,7 +29,7 @@ jobs:
           ref: remediation/ultimate-production-20260819
           fetch-depth: 0
 
-      - name: Prove branch, commit, ancestry, tree and production freeze
+      - name: Prove branch, commit, ancestry and production freeze
         run: |
           set -euo pipefail
           branch="$(git branch --show-current)"
@@ -50,12 +49,21 @@ jobs:
           test "$branch" = 'remediation/ultimate-production-20260819'
           test "$head" = "$EXPECTED_HEAD"
           test "$parent" = "$EXPECTED_PARENT"
-          test "$tree" = "$EXPECTED_TREE"
-          test "$parent_tree" = "$EXPECTED_BASELINE_TREE"
+          test "$parent_tree" = "$EXPECTED_PARENT_TREE"
           test "$remote_rc" = "$EXPECTED_HEAD"
           test "$prod" = "$EXPECTED_PRODUCTION"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           git fsck --no-reflogs --connectivity-only "$EXPECTED_HEAD"
+
+      - name: Prove correction scope is one manifest replacement
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$EXPECTED_PARENT" "$EXPECTED_HEAD")"
+          test "$changed" = 'supabase/schema-contract.json'
+          stats="$(git diff --numstat "$EXPECTED_PARENT" "$EXPECTED_HEAD" -- supabase/schema-contract.json)"
+          echo "Correction stats: $stats"
+          test "$stats" = $'1\t1\tsupabase/schema-contract.json'
+          grep -Fq '"20260821142000_northlight_same_tenant_integrity.sql": "1b67f9872e335622385d1469b4ef2e08269181ec693e72e8f012408108ab8983"' supabase/schema-contract.json
 
       - name: Verify mandatory checkpoint documents are present
         run: |
