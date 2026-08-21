@@ -233,40 +233,53 @@ test('database dispatch uses expiring leases and skip-locked claims for both job
   assert.match(sql, /next_attempt_at = case when p_sent then now\(\) \+ interval '15 minutes'/);
 });
 
-test('Cloudflare Pages producer config stays Pages-valid while the dispatcher Worker remains observable and bounded', async () => {
-  const pages = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
-  const worker = JSON.parse(await readFile(new URL('../workers/integration-dispatcher/wrangler.jsonc', import.meta.url), 'utf8'));
+test('Cloudflare Pages stays dashboard-managed while preview and production dispatcher resources remain isolated', async () => {
+  await assert.rejects(
+    readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'),
+    error => error?.code === 'ENOENT',
+    'A root Pages Wrangler file must not be deployment-active before dashboard configuration is downloaded and reconciled',
+  );
 
-  assert.equal(pages.pages_build_output_dir, './dist');
-  assert.equal(pages.compatibility_date, '2026-08-21');
-  assert.deepEqual(pages.compatibility_flags, ['nodejs_compat']);
-  assert.equal(pages.queues.producers[0].binding, 'TASK_HANDOFF_QUEUE');
-  assert.equal(pages.queues.producers[0].queue, 'northlight-task-handoffs');
-  assert.equal(Object.hasOwn(pages, 'observability'), false, 'Pages Wrangler config must not contain Workers-only observability');
+  const production = JSON.parse(await readFile(new URL('../workers/integration-dispatcher/wrangler.jsonc', import.meta.url), 'utf8'));
+  const preview = JSON.parse(await readFile(new URL('../workers/integration-dispatcher/wrangler.preview.jsonc', import.meta.url), 'utf8'));
 
-  assert.equal(worker.main, 'src/index.js');
-  assert.equal(worker.compatibility_date, '2026-08-21');
-  assert.deepEqual(worker.compatibility_flags, ['nodejs_compat']);
-  assert.equal(worker.queues.producers[0].binding, 'TASK_HANDOFF_QUEUE');
-  const consumer = worker.queues.consumers[0];
-  assert.deepEqual({
-    queue: consumer.queue,
-    maxBatchSize: consumer.max_batch_size,
-    maxBatchTimeout: consumer.max_batch_timeout,
-    maxRetries: consumer.max_retries,
-    retryDelay: consumer.retry_delay,
-    deadLetterQueue: consumer.dead_letter_queue,
-    maxConcurrency: consumer.max_concurrency,
-  }, {
-    queue: 'northlight-task-handoffs',
-    maxBatchSize: 10,
-    maxBatchTimeout: 5,
-    maxRetries: 5,
-    retryDelay: 60,
-    deadLetterQueue: 'northlight-task-handoffs-dlq',
-    maxConcurrency: 5,
-  });
-  assert.deepEqual(worker.triggers.crons, ['*/1 * * * *']);
-  assert.equal(worker.observability.enabled, true);
-  assert.equal(worker.observability.traces.enabled, true);
+  assert.equal(production.name, 'northlight-integration-dispatcher');
+  assert.equal(preview.name, 'northlight-integration-dispatcher-preview');
+  assert.equal(production.main, 'src/index.js');
+  assert.equal(preview.main, 'src/index.js');
+  assert.equal(production.compatibility_date, '2026-08-21');
+  assert.equal(preview.compatibility_date, '2026-08-21');
+  assert.deepEqual(production.compatibility_flags, ['nodejs_compat']);
+  assert.deepEqual(preview.compatibility_flags, ['nodejs_compat']);
+
+  const verify = (worker, queue, deadLetterQueue) => {
+    assert.equal(worker.queues.producers[0].binding, 'TASK_HANDOFF_QUEUE');
+    assert.equal(worker.queues.producers[0].queue, queue);
+    const consumer = worker.queues.consumers[0];
+    assert.deepEqual({
+      queue: consumer.queue,
+      maxBatchSize: consumer.max_batch_size,
+      maxBatchTimeout: consumer.max_batch_timeout,
+      maxRetries: consumer.max_retries,
+      retryDelay: consumer.retry_delay,
+      deadLetterQueue: consumer.dead_letter_queue,
+      maxConcurrency: consumer.max_concurrency,
+    }, {
+      queue,
+      maxBatchSize: 10,
+      maxBatchTimeout: 5,
+      maxRetries: 5,
+      retryDelay: 60,
+      deadLetterQueue,
+      maxConcurrency: 5,
+    });
+    assert.deepEqual(worker.triggers.crons, ['*/1 * * * *']);
+    assert.equal(worker.observability.enabled, true);
+    assert.equal(worker.observability.traces.enabled, true);
+  };
+
+  verify(production, 'northlight-task-handoffs', 'northlight-task-handoffs-dlq');
+  verify(preview, 'northlight-task-handoffs-preview', 'northlight-task-handoffs-preview-dlq');
+  assert.notEqual(production.queues.producers[0].queue, preview.queues.producers[0].queue);
+  assert.notEqual(production.queues.consumers[0].dead_letter_queue, preview.queues.consumers[0].dead_letter_queue);
 });
