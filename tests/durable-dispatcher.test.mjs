@@ -233,16 +233,16 @@ test('database dispatch uses expiring leases and skip-locked claims for both job
   assert.match(sql, /next_attempt_at = case when p_sent then now\(\) \+ interval '15 minutes'/);
 });
 
-test('Cloudflare queue configuration is pinned, observable, bounded, and dead-lettered', async () => {
+test('Cloudflare Pages producer config stays Pages-valid while the dispatcher Worker remains observable and bounded', async () => {
   const pages = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   const worker = JSON.parse(await readFile(new URL('../workers/integration-dispatcher/wrangler.jsonc', import.meta.url), 'utf8'));
 
+  assert.equal(pages.pages_build_output_dir, './dist');
   assert.equal(pages.compatibility_date, '2026-08-21');
   assert.deepEqual(pages.compatibility_flags, ['nodejs_compat']);
   assert.equal(pages.queues.producers[0].binding, 'TASK_HANDOFF_QUEUE');
   assert.equal(pages.queues.producers[0].queue, 'northlight-task-handoffs');
-  assert.equal(pages.observability.enabled, true);
-  assert.equal(pages.observability.traces.enabled, true);
+  assert.equal(Object.hasOwn(pages, 'observability'), false, 'Pages Wrangler config must not contain Workers-only observability');
 
   assert.equal(worker.main, 'src/index.js');
   assert.equal(worker.compatibility_date, '2026-08-21');
