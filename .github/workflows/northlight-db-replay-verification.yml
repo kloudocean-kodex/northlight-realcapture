@@ -99,3 +99,6 @@ jobs:
 
       - name: Execute concurrent-session race contracts
         run: bash ci/northlight-db-concurrency.sh
+
+      - name: Execute credential-migration concurrency contracts
+        run: bash ci/northlight-auth-migration-concurrency.sh
