@@ -38,19 +38,19 @@ jobs:
       - name: Fetch exact secret-scanned replay text from shared evidence Drive
         run: |
           set -euo pipefail
-          replay_url='https://drive.usercontent.google.com/download?id=1mrkpchN_CLWrkez8GUqX0wuT9AKpAGzw&export=download&confirm=t'
-          manifest_url='https://drive.usercontent.google.com/download?id=1QQj8JuavdN0Z30P1tj5oSnTO30fWYnxA&export=download&confirm=t'
+          replay_url='https://drive.usercontent.google.com/download?id=1oGOJZU9NiPHItkCL8o4h4-7OhvUCYY2P&export=download&confirm=t'
+          manifest_url='https://drive.usercontent.google.com/download?id=1m-gOJdUa4Z0qHCrcRagrFp_Ki7jI8QVm&export=download&confirm=t'
           curl --location --fail --silent --show-error --max-time 60 "$replay_url" -o /tmp/northlight-db-replay.sql
           curl --location --fail --silent --show-error --max-time 30 "$manifest_url" -o /tmp/northlight-db-replay-source-manifest.json
-          test "$(wc -c </tmp/northlight-db-replay.sql)" -eq 390262
-          test "$(wc -c </tmp/northlight-db-replay-source-manifest.json)" -eq 10898
+          test "$(wc -c </tmp/northlight-db-replay.sql)" -eq 390558
+          test "$(wc -c </tmp/northlight-db-replay-source-manifest.json)" -eq 10902
 
       - name: Verify replay provenance
         run: |
           set -euo pipefail
-          echo '89b4a4907037d6a9ef6b7304c074753f0fcd5fd1db3c409c3875ce72211fe352  /tmp/northlight-db-replay.sql' | sha256sum --check --strict
-          echo '8accad387f723c3c5cfc1e500b044cf2dc4d25ecde123a20ba6a40fd9f447a0a  /tmp/northlight-db-replay-source-manifest.json' | sha256sum --check --strict
-          node -e "const fs=require('fs'),d=JSON.parse(fs.readFileSync('/tmp/northlight-db-replay-source-manifest.json')); if(d.sourceCheckpoint!=='5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5'||d.files.length!==51||d.verificationRevision!=='org-policy-contract-v4') process.exit(1); console.log('Replay manifest:', d.files.length, 'ordered inputs from checkpoint', d.sourceCheckpoint, d.verificationRevision);"
+          echo 'ce2401eede5995ba32e7f9271a914ad816c255d1d299f4160ba36fc3b93401b1  /tmp/northlight-db-replay.sql' | sha256sum --check --strict
+          echo 'fb53e5cc35b4848d51645d5f81886d41f566a7460b450c24d2ac8d06d68a8eed  /tmp/northlight-db-replay-source-manifest.json' | sha256sum --check --strict
+          node -e "const fs=require('fs'),d=JSON.parse(fs.readFileSync('/tmp/northlight-db-replay-source-manifest.json')); if(d.sourceCheckpoint!=='5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5'||d.files.length!==51||d.verificationRevision!=='server-only-auth-policy-v5') process.exit(1); console.log('Replay manifest:', d.files.length, 'ordered inputs from checkpoint', d.sourceCheckpoint, d.verificationRevision);"
 
       - name: Verify PostgreSQL 17 server and client image
         run: |
