@@ -1,0 +1,37 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "northlight-integration-dispatcher",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-21",
+  "compatibility_flags": ["nodejs_compat"],
+  "queues": {
+    "producers": [
+      {
+        "binding": "TASK_HANDOFF_QUEUE",
+        "queue": "northlight-task-handoffs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "northlight-task-handoffs",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "retry_delay": 60,
+        "dead_letter_queue": "northlight-task-handoffs-dlq",
+        "max_concurrency": 5
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["*/1 * * * *"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.05
+    }
+  }
+}

@@ -1,2 +1,42 @@
-import{requireSession,error,signedState}from'../../../_lib/core.js';
-export async function onRequestGet({request,env,params}){const a=await requireSession(request,env,['admin','owner']);if(a.error)return a.error;try{const provider=String(params.provider||''),origin=new URL(request.url).origin,state=await signedState({provider},env.SESSION_SECRET);let loc;if(provider==='google'){if(!env.GOOGLE_CLIENT_ID)return error(409,'Google Workspace is not configured.');const q=new URLSearchParams({client_id:env.GOOGLE_CLIENT_ID,redirect_uri:`${origin}/oauth/google/callback`,response_type:'code',scope:'openid email https://www.googleapis.com/auth/gmail.send',access_type:'offline',prompt:'consent',state});loc=`https://accounts.google.com/o/oauth2/v2/auth?${q}`}else if(provider==='dropbox'){if(!env.DROPBOX_APP_KEY)return error(409,'Dropbox is not configured.');const q=new URLSearchParams({client_id:env.DROPBOX_APP_KEY,redirect_uri:`${origin}/oauth/dropbox/callback`,response_type:'code',token_access_type:'offline',state});loc=`https://www.dropbox.com/oauth2/authorize?${q}`}else if(provider==='xero'){if(!env.XERO_CLIENT_ID)return error(409,'Xero is not configured yet.');const q=new URLSearchParams({response_type:'code',client_id:env.XERO_CLIENT_ID,redirect_uri:`${origin}/oauth/xero/callback`,scope:'openid profile email accounting.transactions accounting.contacts offline_access',state});loc=`https://login.xero.com/identity/connect/authorize?${q}`}else return error(404,'Unknown integration.');return Response.redirect(loc,302)}catch{return error(500,'Could not start integration connection.')}}
+import { requireSession, error } from '../../../_lib/core.js';
+import { beginOAuthAuthorization } from '../../../_lib/oauth-security.js';
+import { buildProviderAuthorizationUrl } from '../../../_lib/oauth-lifecycle.js';
+
+const SHARED_PROVIDERS = new Set(['google', 'dropbox', 'xero']);
+
+export async function onRequestGet({ request, env, params }) {
+  const auth = await requireSession(request, env, ['admin', 'owner']);
+  if (auth.error) return auth.error;
+  const provider = String(params.provider || '');
+  if (!SHARED_PROVIDERS.has(provider)) return error(404, 'Unknown integration.');
+  try {
+    const url = new URL(request.url);
+    const authorization = await beginOAuthAuthorization(env, {
+      request,
+      provider,
+      actorUserId: auth.session.userId,
+      returnPath: url.searchParams.get('return_to') || '/'
+    });
+    const location = buildProviderAuthorizationUrl(env, {
+      provider,
+      origin: authorization.origin,
+      state: authorization.state,
+      codeChallenge: authorization.codeChallenge
+    });
+    return new Response(null, {
+      status: 302,
+      headers: {
+        location,
+        'set-cookie': authorization.cookie,
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+        'x-content-type-options': 'nosniff'
+      }
+    });
+  } catch (exception) {
+    const configuration = /not_configured|oauth_(?:canonical|origin|insecure)/.test(String(exception?.message || ''));
+    return error(configuration ? 409 : 500, configuration
+      ? 'This integration connection is not configured safely yet.'
+      : 'Could not start integration connection.');
+  }
+}
