@@ -30,8 +30,14 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf /tmp/northlight-drive-git
-          mkdir -p /tmp/northlight-drive-git
-          gdown --folder --remaining-ok 'https://drive.google.com/drive/folders/1wsoxgfPnj_svTxaCtb63FzE0U4g0L181' -O /tmp/northlight-drive-git
+          mkdir -p /tmp/northlight-drive-git/objects/9d
+          # This exact loose tree object is readable through the shared Drive but
+          # gdown's folder transport intermittently failed to obtain its public link.
+          curl --location --fail --silent --show-error --max-time 30 \
+            'https://drive.usercontent.google.com/download?id=1EK_RKWYR6RdhAKEj9ybDoE_RMclcRfFo&export=download&confirm=t' \
+            -o /tmp/northlight-drive-git/objects/9d/2058d9f68b3bf8dac6755d94820cb6aaacabf2
+          test "$(wc -c </tmp/northlight-drive-git/objects/9d/2058d9f68b3bf8dac6755d94820cb6aaacabf2)" -eq 765
+          gdown --folder --continue 'https://drive.google.com/drive/folders/1wsoxgfPnj_svTxaCtb63FzE0U4g0L181' -O /tmp/northlight-drive-git
 
       - name: Verify checkpoint object graph without pushing
         run: |
