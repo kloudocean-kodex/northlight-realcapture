@@ -1,0 +1,145 @@
+name: Northlight Tasks Real Browser Regression
+
+on:
+  push:
+    branches:
+      - northlight-combined-verify-20260821
+  pull_request:
+    branches:
+      - northlight-production
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tasks-real-browser:
+    name: Tasks search remains responsive in real Chrome
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXPECTED_HEAD: 0174819c4969bc083416b0f4df79402969e0baf4
+      EXPECTED_PRODUCTION: 1c9696a463c2d12acf5b5ffe839bd8aa9d75f80f
+    steps:
+      - name: Checkout exact authoritative remediation
+        uses: actions/checkout@v6
+        with:
+          ref: remediation/ultimate-production-20260819
+          fetch-depth: 0
+
+      - name: Prove exact target and production freeze
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = 'remediation/ultimate-production-20260819'
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git ls-remote --heads origin refs/heads/remediation/ultimate-production-20260819 | awk '{print $1}')" = "$EXPECTED_HEAD"
+          test "$(git ls-remote --heads origin refs/heads/northlight-production | awk '{print $1}')" = "$EXPECTED_PRODUCTION"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install and build exact UI
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          CF_PAGES_COMMIT_SHA="$EXPECTED_HEAD" \
+          CF_PAGES_BRANCH='remediation/ultimate-production-20260819' \
+          npm run build
+          git restore --source=HEAD -- functions/_lib/build-info.js
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Create disposable Tasks browser fixture around built UX runtime
+        run: |
+          cat > dist/__tasks-regression.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+          <head><meta charset="utf-8"><title>Northlight Tasks regression</title></head>
+          <body>
+            <header class="topbar"><h2>Tasks</h2></header>
+            <main id="page">
+              <section class="card" id="taskList">
+                <div class="task-row">NL-1001 · Alpha House · Carlton · Photographer Alex</div>
+                <div class="task-row">NL-1002 · Bravo Terrace · Richmond · Photographer Brooke</div>
+                <div class="task-row">NL-1003 · Bravo Apartments · Southbank · Photographer Casey</div>
+              </section>
+            </main>
+            <div id="toast" class="hidden"></div>
+            <script src="/assets/ux-runtime.js"></script>
+            <script>
+              (async()=>{
+                const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+                const waitFor=async(fn,ms=3000)=>{const end=Date.now()+ms;while(Date.now()<end){const value=fn();if(value)return value;await sleep(20)}throw new Error('fixture_timeout')};
+                const input=await waitFor(()=>document.querySelector('#nlTaskSearchInput'));
+                const count=()=>document.querySelector('#nlTaskSearchCount')?.textContent||'';
+                const visible=()=>[...document.querySelectorAll('#page .task-row')].filter(row=>!row.hidden).length;
+                let heartbeat=0;
+                const beat=setInterval(()=>heartbeat++,20);
+                const search=async(value,expectedCount,expectedText)=>{
+                  input.value=value;
+                  input.dispatchEvent(new Event('input',{bubbles:true}));
+                  await sleep(180);
+                  if(visible()!==expectedCount)throw new Error(`visible_${value}_${visible()}`);
+                  if(count()!==expectedText)throw new Error(`count_${value}_${count()}`);
+                };
+                await search('bravo',2,'2 of 3 tasks');
+                await search('alpha',1,'1 of 3 tasks');
+                await search('',3,'3 tasks');
+                clearInterval(beat);
+                if(heartbeat<10)throw new Error(`main_thread_starved_${heartbeat}`);
+                await sleep(80);
+                const marker=document.createElement('div');
+                marker.id='tasksRegressionPass';
+                marker.textContent=`PASS:${heartbeat}:3 tasks`;
+                document.body.appendChild(marker);
+              })().catch(error=>{
+                const marker=document.createElement('div');
+                marker.id='tasksRegressionFail';
+                marker.textContent=`FAIL:${String(error?.message||error)}`;
+                document.body.appendChild(marker);
+              });
+            </script>
+          </body>
+          </html>
+          HTML
+
+      - name: Exercise Tasks search repeatedly in real Chrome under a hard timeout
+        run: |
+          set -euo pipefail
+          node scripts/ci-browser-server.mjs >/tmp/northlight-tasks-server.log 2>&1 &
+          server_pid=$!
+          cleanup(){ kill "$server_pid" 2>/dev/null || true; }
+          trap cleanup EXIT
+          ready=''
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error --max-time 3 'http://127.0.0.1:4173/__tasks-regression.html' >/dev/null; then ready='yes'; break; fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then cat /tmp/northlight-tasks-server.log || true; exit 1; fi
+            sleep 1
+          done
+          test "$ready" = 'yes'
+          chrome="$(command -v google-chrome || command -v google-chrome-stable || true)"
+          test -n "$chrome"
+          dom="$(mktemp)"
+          log="$(mktemp)"
+          if ! timeout --signal=KILL 25s "$chrome" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-background-networking --virtual-time-budget=2500 --dump-dom 'http://127.0.0.1:4173/__tasks-regression.html' >"$dom" 2>"$log"; then
+            echo '::error::Tasks regression page did not return from real Chrome; possible main-thread starvation.'
+            cat "$log" || true
+            exit 1
+          fi
+          if grep -Fq 'id="tasksRegressionFail"' "$dom"; then
+            echo '::error::Tasks regression fixture reported a failure.'
+            grep -o 'FAIL:[^<]*' "$dom" || true
+            exit 1
+          fi
+          grep -Fq 'id="tasksRegressionPass"' "$dom"
+          grep -Eq 'PASS:[1-9][0-9]+:3 tasks' "$dom"
+          echo 'Real Chrome remained responsive through repeated Tasks searches and stabilized exact result counts.'
+
+      - name: Re-prove frozen refs
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote --heads origin refs/heads/remediation/ultimate-production-20260819 | awk '{print $1}')" = "$EXPECTED_HEAD"
+          test "$(git ls-remote --heads origin refs/heads/northlight-production | awk '{print $1}')" = "$EXPECTED_PRODUCTION"
