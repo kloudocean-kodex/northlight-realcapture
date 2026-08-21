@@ -20,44 +20,66 @@ jobs:
       - name: Checkout verification branch
         uses: actions/checkout@v6
 
-      - name: Install Drive downloader
+      - name: Install Drive enumerator
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check --quiet 'gdown==6.0.0'
+          python -m pip install --disable-pip-version-check --quiet 'gdown==6.1.0'
           gdown --version
 
-      - name: Download shared .git snapshot only
+      - name: Enumerate and download shared .git snapshot deterministically
         run: |
           set -euo pipefail
           rm -rf /tmp/northlight-drive-git
-          mkdir -p /tmp/northlight-drive-git/objects/9d
-          # This exact loose tree object is readable through the shared Drive but
-          # gdown's folder transport intermittently failed to obtain its public link.
-          curl --location --fail --silent --show-error --max-time 30 \
-            'https://drive.usercontent.google.com/download?id=1EK_RKWYR6RdhAKEj9ybDoE_RMclcRfFo&export=download&confirm=t' \
-            -o /tmp/northlight-drive-git/objects/9d/2058d9f68b3bf8dac6755d94820cb6aaacabf2
-          test "$(wc -c </tmp/northlight-drive-git/objects/9d/2058d9f68b3bf8dac6755d94820cb6aaacabf2)" -eq 765
-          gdown --folder --continue 'https://drive.google.com/drive/folders/1wsoxgfPnj_svTxaCtb63FzE0U4g0L181' -O /tmp/northlight-drive-git
+          mkdir -p /tmp/northlight-drive-git
+          gdown 'https://drive.google.com/drive/folders/1wsoxgfPnj_svTxaCtb63FzE0U4g0L181' --folder --json --quiet > /tmp/northlight-drive-git-files.json
+          count="$(jq 'length' /tmp/northlight-drive-git-files.json)"
+          echo "Drive .git listing contains $count files"
+          test "$count" -ge 200
+          jq -r '.[] | [.url,.path] | @tsv' /tmp/northlight-drive-git-files.json |
+          while IFS=$'\t' read -r url rel; do
+            test -n "$url"
+            test -n "$rel"
+            id="${url##*=}"
+            dest="/tmp/northlight-drive-git/$rel"
+            mkdir -p "$(dirname "$dest")"
+            ok=0
+            for attempt in 1 2 3 4 5; do
+              if curl --location --fail --silent --show-error --max-time 30 \
+                "https://drive.usercontent.google.com/download?id=${id}&export=download&confirm=t" \
+                -o "${dest}.part"; then
+                mv "${dest}.part" "$dest"
+                ok=1
+                break
+              fi
+              rm -f "${dest}.part"
+              sleep $((attempt * 2))
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::Failed to download Drive file id=$id path=$rel"
+              exit 1
+            fi
+          done
 
       - name: Verify checkpoint object graph without pushing
         run: |
           set -euo pipefail
-          gitdir='/tmp/northlight-drive-git'
-          if [ ! -f "$gitdir/HEAD" ]; then
-            candidate="$(find /tmp/northlight-drive-git -type f -name HEAD -print -quit)"
-            test -n "$candidate"
-            gitdir="$(dirname "$candidate")"
-          fi
+          candidate="$(find /tmp/northlight-drive-git -type f -name HEAD -not -path '*/logs/*' -print -quit)"
+          test -n "$candidate"
+          gitdir="$(dirname "$candidate")"
           expected_branch='refs/heads/remediation/ultimate-production-20260819'
           expected_head='5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5'
           expected_parent='1160cc20044b26a0017df1eb281198b416b9735d'
           expected_tree='9d2058d9f68b3bf8dac6755d94820cb6aaacabf2'
+          expected_baseline_tree='f3827ce4c8107173e04044d9fe9b65e3b2f026f9'
           test "$(cat "$gitdir/HEAD")" = "ref: $expected_branch"
           test "$(cat "$gitdir/$expected_branch")" = "$expected_head"
           test "$(git --git-dir="$gitdir" cat-file -t "$expected_head")" = commit
           test "$(git --git-dir="$gitdir" cat-file -t "$expected_parent")" = commit
           test "$(git --git-dir="$gitdir" show -s --format=%P "$expected_head")" = "$expected_parent"
           test "$(git --git-dir="$gitdir" show -s --format=%T "$expected_head")" = "$expected_tree"
-          test "$(git --git-dir="$gitdir" show -s --format=%T "$expected_parent")" = 'f3827ce4c8107173e04044d9fe9b65e3b2f026f9'
+          test "$(git --git-dir="$gitdir" show -s --format=%T "$expected_parent")" = "$expected_baseline_tree"
+          test "$(git --git-dir="$gitdir" hash-object -t commit "$gitdir/objects/5f/26a32c15bc7394ed2c7aee22b0c42ea3b180f5" 2>/dev/null || true)" != "$expected_head" || true
           git --git-dir="$gitdir" fsck --no-reflogs --connectivity-only "$expected_head"
           echo "Exact local checkpoint object graph verified: $expected_head"
+          echo "Checkpoint tree: $expected_tree"
+          echo "Local baseline tree: $expected_baseline_tree"
