@@ -1,0 +1,164 @@
+name: Northlight Authoritative Remediation Baseline
+
+on:
+  push:
+    branches:
+      - northlight-combined-verify-20260821
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authoritative-baseline:
+    name: Baseline exact remediation checkpoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: 5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5
+      EXPECTED_PARENT: 1160cc20044b26a0017df1eb281198b416b9735d
+      EXPECTED_TREE: 9d2058d9f68b3bf8dac6755d94820cb6aaacabf2
+      EXPECTED_BASELINE_TREE: f3827ce4c8107173e04044d9fe9b65e3b2f026f9
+      EXPECTED_PRODUCTION: 1c9696a463c2d12acf5b5ffe839bd8aa9d75f80f
+    steps:
+      - name: Checkout authoritative remediation branch
+        uses: actions/checkout@v6
+        with:
+          ref: remediation/ultimate-production-20260819
+          fetch-depth: 0
+
+      - name: Prove branch, commit, ancestry, tree and production freeze
+        run: |
+          set -euo pipefail
+          branch="$(git branch --show-current)"
+          head="$(git rev-parse HEAD)"
+          parent="$(git show -s --format=%P HEAD)"
+          tree="$(git show -s --format=%T HEAD)"
+          parent_tree="$(git show -s --format=%T "$EXPECTED_PARENT")"
+          prod="$(git ls-remote --heads origin refs/heads/northlight-production | awk '{print $1}')"
+          remote_rc="$(git ls-remote --heads origin refs/heads/remediation/ultimate-production-20260819 | awk '{print $1}')"
+          echo "Branch: $branch"
+          echo "HEAD: $head"
+          echo "Parent: $parent"
+          echo "Tree: $tree"
+          echo "Parent tree: $parent_tree"
+          echo "Remote remediation: $remote_rc"
+          echo "Production: $prod"
+          test "$branch" = 'remediation/ultimate-production-20260819'
+          test "$head" = "$EXPECTED_HEAD"
+          test "$parent" = "$EXPECTED_PARENT"
+          test "$tree" = "$EXPECTED_TREE"
+          test "$parent_tree" = "$EXPECTED_BASELINE_TREE"
+          test "$remote_rc" = "$EXPECTED_HEAD"
+          test "$prod" = "$EXPECTED_PRODUCTION"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          git fsck --no-reflogs --connectivity-only "$EXPECTED_HEAD"
+
+      - name: Verify mandatory checkpoint documents are present
+        run: |
+          set -euo pipefail
+          test -s docs/CHECKPOINT-2026-08-21.md
+          test -s docs/database-reproducibility-plan.md
+          grep -Fq 'remediation/ultimate-production-20260819' docs/CHECKPOINT-2026-08-21.md
+          grep -Fq 'not yet reproducible from an empty Supabase project' docs/database-reproducibility-plan.md
+          echo 'Mandatory checkpoint documents present and non-empty.'
+
+      - name: Verify diff whitespace and tracked-file hygiene before install
+        run: |
+          set -euo pipefail
+          git diff --check "$EXPECTED_PARENT" "$EXPECTED_HEAD"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          node <<'NODE'
+          const {execFileSync}=require('node:child_process');
+          const fs=require('node:fs');
+          const files=execFileSync('git',['ls-files','-z'],{encoding:'utf8'}).split('\0').filter(Boolean);
+          const forbiddenFiles=files.filter(f=>/(^|\/)(\.env(?:\..*)?|\.dev\.vars|id_(?:rsa|ed25519)|[^/]+\.(?:pem|p12|pfx|key))$/i.test(f)&&!/(^|\/)\.env\.example$/i.test(f));
+          const patterns=[
+            ['GitHub token',/\bgh[pousr]_[A-Za-z0-9_]{30,}\b/g],
+            ['Slack token',/\bxox[baprs]-[A-Za-z0-9-]{20,}\b/g],
+            ['AWS access key',/\bAKIA[0-9A-Z]{16}\b/g],
+            ['private key',/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g]
+          ];
+          const findings=[];
+          for(const file of files){
+            let buf;try{buf=fs.readFileSync(file)}catch{continue}
+            if(buf.includes(0))continue;
+            const text=buf.toString('utf8');
+            for(const [label,re] of patterns){re.lastIndex=0;if(re.test(text))findings.push(`${file}: ${label}`)}
+          }
+          for(const file of forbiddenFiles)findings.push(`${file}: sensitive filename tracked`);
+          if(findings.length){
+            console.error('High-confidence tracked-secret hygiene findings (values intentionally suppressed):');
+            for(const finding of findings)console.error(`- ${finding}`);
+            process.exit(1);
+          }
+          console.log(`Tracked-secret hygiene scan: ${files.length} tracked files checked; no high-confidence finding.`);
+          NODE
+
+      - name: Verify recipient configuration contract
+        run: |
+          set -euo pipefail
+          obsolete='realcapture.mel@gmail.com'
+          current='pradeeppatilfg@gmail.com'
+          if git grep -n -F "$obsolete" -- . ':(exclude).git' > /tmp/obsolete-recipient.txt; then
+            echo '::error::Obsolete operations recipient remains in tracked repository paths:'
+            cut -d: -f1-2 /tmp/obsolete-recipient.txt | sort -u
+            exit 1
+          fi
+          current_count="$(git grep -n -F "$current" -- . ':(exclude).git' | wc -l | tr -d ' ')"
+          echo "Authoritative current-recipient references: $current_count"
+          test "$current_count" -ge 1
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install exact locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run actual test suite
+        run: |
+          set -euo pipefail
+          npm test 2>&1 | tee /tmp/northlight-tests.log
+          grep -E '^# (tests|pass|fail|skipped|cancelled|todo) ' /tmp/northlight-tests.log || true
+
+      - name: Run actual build and syntax checks
+        run: |
+          set -euo pipefail
+          npm run build 2>&1 | tee /tmp/northlight-build.log
+
+      - name: Validate dispatcher bundle and Cloudflare bindings by dry run
+        run: |
+          set -euo pipefail
+          npm run check:dispatcher 2>&1 | tee /tmp/northlight-dispatcher-dry-run.log
+
+      - name: Verify worktree remains clean and production remains frozen
+        run: |
+          set -euo pipefail
+          git diff --check
+          status="$(git status --porcelain=v1 --untracked-files=all)"
+          if [ -n "$status" ]; then
+            echo '::error::Authoritative checkout was modified by baseline commands:'
+            printf '%s\n' "$status"
+            exit 1
+          fi
+          prod="$(git ls-remote --heads origin refs/heads/northlight-production | awk '{print $1}')"
+          remote_rc="$(git ls-remote --heads origin refs/heads/remediation/ultimate-production-20260819 | awk '{print $1}')"
+          test "$prod" = "$EXPECTED_PRODUCTION"
+          test "$remote_rc" = "$EXPECTED_HEAD"
+          echo "Final production freeze: $prod"
+          echo "Final authoritative remediation ref: $remote_rc"
+
+      - name: Upload baseline logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: northlight-authoritative-baseline-${{ github.run_id }}
+          path: |
+            /tmp/northlight-tests.log
+            /tmp/northlight-build.log
+            /tmp/northlight-dispatcher-dry-run.log
+          if-no-files-found: ignore
+          retention-days: 30
