@@ -44,7 +44,13 @@ jobs:
       - name: Verify bundle identity
         run: |
           set -euo pipefail
-          echo '56a9e388180d902687cb1e5e11810be3bf736e266ea31cc1c522d7ce0012c748  ci/northlight-db-replay-bundle.tar.gz' | sha256sum --check --strict
+          expected='56a9e388180d902687cb1e5e11810be3bf736e266ea31cc1c522d7ce0012c748'
+          actual="$(sha256sum ci/northlight-db-replay-bundle.tar.gz | awk '{print $1}')"
+          echo "Bundle SHA-256: $actual"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Bundle SHA-256 mismatch; expected $expected, got $actual"
+            exit 1
+          fi
 
       - name: Expand secret-scanned database candidate bundle
         run: tar -xzf ci/northlight-db-replay-bundle.tar.gz
