@@ -44,7 +44,7 @@ jobs:
       - name: Verify bundle identity
         run: |
           set -euo pipefail
-          expected='56a9e388180d902687cb1e5e11810be3bf736e266ea31cc1c522d7ce0012c748'
+          expected='d5691f1ba0005dffa14be82a74afad4c06d7abb5fa8042f12eeabe197435093d'
           actual="$(sha256sum ci/northlight-db-replay-bundle.tar.gz | awk '{print $1}')"
           echo "Bundle SHA-256: $actual"
           if [ "$actual" != "$expected" ]; then
