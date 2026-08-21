@@ -15,14 +15,17 @@ test('real Chrome always executes the exact built dist artifact under a hard tim
   assert.doesNotMatch(workflow,/remote-debugging-(?:port|pipe)/);
 });
 
-test('release certification proves Cloudflare serves the same static UI bytes that Chrome tested',()=>{
-  assert.match(workflow,/Verify deployed static UI matches browser-tested artifact/);
-  assert.match(workflow,/startsWith\(github\.head_ref, 'northlight-certification-'\)/);
+test('post-deploy production certification proves Cloudflare serves the same static UI bytes that Chrome tested',()=>{
+  assert.match(workflow,/Verify deployed production static UI matches browser-tested artifact/);
+  const step=workflow.slice(workflow.indexOf('- name: Verify deployed production static UI matches browser-tested artifact'));
+  const condition=step.split('\n').find(line=>line.trim().startsWith('if:'))?.trim();
+  assert.equal(condition,"if: github.event_name == 'push' && github.ref_name == 'northlight-production'");
+  assert.doesNotMatch(condition,/pull_request|northlight-certification-/);
   assert.match(workflow,/printf '%s\\n' 'dist\/index\.html'/);
   assert.match(workflow,/find dist\/assets -type f -print \| sort/);
   assert.match(workflow,/curl --location --fail --silent --show-error --max-time 20 "\$base\/\$rel"/);
   assert.match(workflow,/cmp -s "\$file" "\$remote"/);
-  assert.match(workflow,/Cloudflare static UI matches the exact browser-tested artifact/);
+  assert.match(workflow,/Cloudflare production static UI matches the exact browser-tested artifact/);
 });
 
 test('live signed-out smoke includes auth session and protected operational APIs',()=>{
