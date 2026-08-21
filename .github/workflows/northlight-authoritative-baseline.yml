@@ -135,23 +135,39 @@ jobs:
           npm test 2>&1 | tee /tmp/northlight-tests.log
           grep -E '^# (tests|pass|fail|skipped|cancelled|todo) ' /tmp/northlight-tests.log || true
 
-      - name: Run actual build and syntax checks
+      - name: Run actual build and syntax checks with authoritative build identity
         run: |
           set -euo pipefail
+          CF_PAGES_COMMIT_SHA="$EXPECTED_HEAD" \
+          CF_PAGES_BRANCH='remediation/ultimate-production-20260819' \
           npm run build 2>&1 | tee /tmp/northlight-build.log
+
+      - name: Verify generated build metadata is the only build mutation, then restore source tree
+        run: |
+          set -euo pipefail
+          status="$(git status --porcelain=v1 --untracked-files=all)"
+          printf 'Post-build tracked status:\n%s\n' "$status"
+          test "$status" = ' M functions/_lib/build-info.js'
+          grep -Fq "\"commitSha\":\"$EXPECTED_HEAD\"" functions/_lib/build-info.js
+          grep -Fq '"branch":"remediation/ultimate-production-20260819"' functions/_lib/build-info.js
+          test -s dist/build-info.json
+          grep -Fq "\"commitSha\":\"$EXPECTED_HEAD\"" dist/build-info.json
+          grep -Fq '"branch":"remediation/ultimate-production-20260819"' dist/build-info.json
+          git restore --source=HEAD -- functions/_lib/build-info.js
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
       - name: Validate dispatcher bundle and Cloudflare bindings by dry run
         run: |
           set -euo pipefail
           npm run check:dispatcher 2>&1 | tee /tmp/northlight-dispatcher-dry-run.log
 
-      - name: Verify worktree remains clean and production remains frozen
+      - name: Verify final clean tree and production freeze
         run: |
           set -euo pipefail
           git diff --check
           status="$(git status --porcelain=v1 --untracked-files=all)"
           if [ -n "$status" ]; then
-            echo '::error::Authoritative checkout was modified by baseline commands:'
+            echo '::error::Unexpected authoritative checkout mutation remains:'
             printf '%s\n' "$status"
             exit 1
           fi
