@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - 'northlight-db-replay-*'
+  pull_request:
+    branches:
+      - northlight-production
 
 permissions:
   contents: read
