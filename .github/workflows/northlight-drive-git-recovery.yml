@@ -15,7 +15,7 @@ jobs:
   verify-drive-git:
     name: Verify exact Drive Git checkpoint
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout verification branch
         uses: actions/checkout@v6
@@ -23,7 +23,8 @@ jobs:
       - name: Install Drive downloader
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check --quiet 'gdown==5.2.0'
+          python -m pip install --disable-pip-version-check --quiet 'gdown==6.0.0'
+          gdown --version
 
       - name: Download shared .git snapshot only
         run: |
