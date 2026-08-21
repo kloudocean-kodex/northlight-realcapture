@@ -18,9 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      EXPECTED_HEAD: 7a6947fa763b7aec169fc3f5b079494a00f49d93
-      EXPECTED_PARENT: 5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5
-      EXPECTED_PARENT_TREE: 9d2058d9f68b3bf8dac6755d94820cb6aaacabf2
+      EXPECTED_HEAD: 0174819c4969bc083416b0f4df79402969e0baf4
+      RECOVERED_BASE: 7a6947fa763b7aec169fc3f5b079494a00f49d93
+      CHECKPOINT: 5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5
+      CHECKPOINT_TREE: 9d2058d9f68b3bf8dac6755d94820cb6aaacabf2
       EXPECTED_PRODUCTION: 1c9696a463c2d12acf5b5ffe839bd8aa9d75f80f
     steps:
       - name: Checkout authoritative remediation branch
@@ -29,41 +30,54 @@ jobs:
           ref: remediation/ultimate-production-20260819
           fetch-depth: 0
 
-      - name: Prove branch, commit, ancestry and production freeze
+      - name: Prove branch, lineage and production freeze
         run: |
           set -euo pipefail
           branch="$(git branch --show-current)"
           head="$(git rev-parse HEAD)"
-          parent="$(git show -s --format=%P HEAD)"
-          tree="$(git show -s --format=%T HEAD)"
-          parent_tree="$(git show -s --format=%T "$EXPECTED_PARENT")"
+          checkpoint_tree="$(git show -s --format=%T "$CHECKPOINT")"
           prod="$(git ls-remote --heads origin refs/heads/northlight-production | awk '{print $1}')"
           remote_rc="$(git ls-remote --heads origin refs/heads/remediation/ultimate-production-20260819 | awk '{print $1}')"
           echo "Branch: $branch"
           echo "HEAD: $head"
-          echo "Parent: $parent"
-          echo "Tree: $tree"
-          echo "Parent tree: $parent_tree"
-          echo "Remote remediation: $remote_rc"
+          echo "Recovered base: $RECOVERED_BASE"
+          echo "Checkpoint: $CHECKPOINT"
           echo "Production: $prod"
           test "$branch" = 'remediation/ultimate-production-20260819'
           test "$head" = "$EXPECTED_HEAD"
-          test "$parent" = "$EXPECTED_PARENT"
-          test "$parent_tree" = "$EXPECTED_PARENT_TREE"
+          test "$checkpoint_tree" = "$CHECKPOINT_TREE"
           test "$remote_rc" = "$EXPECTED_HEAD"
           test "$prod" = "$EXPECTED_PRODUCTION"
+          git merge-base --is-ancestor "$CHECKPOINT" "$RECOVERED_BASE"
+          git merge-base --is-ancestor "$RECOVERED_BASE" "$EXPECTED_HEAD"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           git fsck --no-reflogs --connectivity-only "$EXPECTED_HEAD"
 
-      - name: Prove correction scope is one manifest replacement
+      - name: Prove recovered manifest correction stayed exact
         run: |
           set -euo pipefail
-          changed="$(git diff --name-only "$EXPECTED_PARENT" "$EXPECTED_HEAD")"
+          changed="$(git diff --name-only "$CHECKPOINT" "$RECOVERED_BASE")"
           test "$changed" = 'supabase/schema-contract.json'
-          stats="$(git diff --numstat "$EXPECTED_PARENT" "$EXPECTED_HEAD" -- supabase/schema-contract.json)"
-          echo "Correction stats: $stats"
+          stats="$(git diff --numstat "$CHECKPOINT" "$RECOVERED_BASE" -- supabase/schema-contract.json)"
+          echo "Manifest correction stats: $stats"
           test "$stats" = $'1\t1\tsupabase/schema-contract.json'
           grep -Fq '"20260821142000_northlight_same_tenant_integrity.sql": "1b67f9872e335622385d1469b4ef2e08269181ec693e72e8f012408108ab8983"' supabase/schema-contract.json
+
+      - name: Prove Calendar hardening scope and Cloudflare config boundary
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$RECOVERED_BASE" "$EXPECTED_HEAD" | sort)"
+          expected=$'tests/durable-dispatcher.test.mjs\nworkers/integration-dispatcher/src/index.js\nwrangler.jsonc'
+          test "$changed" = "$expected"
+          node <<'NODE'
+          const fs=require('node:fs');
+          const pages=JSON.parse(fs.readFileSync('wrangler.jsonc','utf8'));
+          const worker=JSON.parse(fs.readFileSync('workers/integration-dispatcher/wrangler.jsonc','utf8'));
+          if(Object.hasOwn(pages,'observability')) throw new Error('pages_observability_must_be_absent');
+          if(pages?.queues?.producers?.[0]?.binding!=='TASK_HANDOFF_QUEUE') throw new Error('pages_queue_binding_missing');
+          if(worker?.observability?.enabled!==true || worker?.observability?.traces?.enabled!==true) throw new Error('worker_observability_missing');
+          if(worker?.queues?.consumers?.[0]?.queue!=='northlight-task-handoffs') throw new Error('worker_queue_consumer_missing');
+          NODE
 
       - name: Verify mandatory checkpoint documents are present
         run: |
@@ -77,7 +91,7 @@ jobs:
       - name: Verify diff whitespace and tracked-file hygiene before install
         run: |
           set -euo pipefail
-          git diff --check "$EXPECTED_PARENT" "$EXPECTED_HEAD"
+          git diff --check "$CHECKPOINT" "$EXPECTED_HEAD"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           node <<'NODE'
           const {execFileSync}=require('node:child_process');
@@ -156,6 +170,14 @@ jobs:
           git restore --source=HEAD -- functions/_lib/build-info.js
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
+      - name: Validate Pages configuration and Functions bundle
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/northlight-pages-functions
+          npx wrangler pages functions build functions --outdir=/tmp/northlight-pages-functions 2>&1 | tee /tmp/northlight-pages-build.log
+          test -d /tmp/northlight-pages-functions
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
       - name: Validate dispatcher bundle and Cloudflare bindings by dry run
         run: |
           set -euo pipefail
@@ -186,6 +208,7 @@ jobs:
           path: |
             /tmp/northlight-tests.log
             /tmp/northlight-build.log
+            /tmp/northlight-pages-build.log
             /tmp/northlight-dispatcher-dry-run.log
           if-no-files-found: ignore
           retention-days: 30
