@@ -1,0 +1,71 @@
+name: Northlight Checkpoint Byte Probe
+
+on:
+  push:
+    branches:
+      - northlight-combined-verify-20260821
+  pull_request:
+    branches:
+      - northlight-production
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checkpoint-bytes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5
+          fetch-depth: 0
+      - name: Prove immutable checkpoint bytes before install
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5'
+          schema='supabase/schema-contract.json'
+          migration='supabase/migrations/20260821142000_northlight_same_tenant_integrity.sql'
+          echo "HEAD=$(git rev-parse HEAD)"
+          echo "TREE=$(git rev-parse HEAD^{tree})"
+          echo "schema_git_blob=$(git rev-parse HEAD:$schema)"
+          echo "schema_worktree_blob=$(git hash-object "$schema")"
+          echo "migration_git_blob=$(git rev-parse HEAD:$migration)"
+          echo "migration_worktree_blob=$(git hash-object "$migration")"
+          echo "schema_sha256=$(sha256sum "$schema" | awk '{print $1}')"
+          echo "migration_sha256=$(sha256sum "$migration" | awk '{print $1}')"
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const c=JSON.parse(fs.readFileSync('supabase/schema-contract.json','utf8'));
+          const name='20260821142000_northlight_same_tenant_integrity.sql';
+          console.log(`manifest_migration_sha256=${c.localCandidateMigrationSha256[name]}`);
+          NODE
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Install dependencies and prove source bytes did not move
+        run: |
+          set -euo pipefail
+          schema='supabase/schema-contract.json'
+          migration='supabase/migrations/20260821142000_northlight_same_tenant_integrity.sql'
+          before_schema="$(sha256sum "$schema" | awk '{print $1}')"
+          before_migration="$(sha256sum "$migration" | awk '{print $1}')"
+          npm ci --no-audit --no-fund
+          after_schema="$(sha256sum "$schema" | awk '{print $1}')"
+          after_migration="$(sha256sum "$migration" | awk '{print $1}')"
+          echo "schema_before=$before_schema"
+          echo "schema_after=$after_schema"
+          echo "migration_before=$before_migration"
+          echo "migration_after=$after_migration"
+          test "$before_schema" = "$after_schema"
+          test "$before_migration" = "$after_migration"
+          git diff --exit-code -- "$schema" "$migration"
+          node - <<'NODE'
+          const fs=require('node:fs');
+          const c=JSON.parse(fs.readFileSync('supabase/schema-contract.json','utf8'));
+          const name='20260821142000_northlight_same_tenant_integrity.sql';
+          console.log(`manifest_after_install=${c.localCandidateMigrationSha256[name]}`);
+          NODE
