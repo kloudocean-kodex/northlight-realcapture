@@ -1,0 +1,60 @@
+name: Northlight DB Replay Verification
+
+on:
+  push:
+    branches:
+      - 'northlight-db-replay-*'
+
+permissions:
+  contents: read
+
+jobs:
+  database-replay:
+    name: PostgreSQL 17 clean-room replay
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: northlight
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d northlight"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/northlight
+    steps:
+      - name: Checkout verification branch
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Verify bundle identity
+        run: |
+          set -euo pipefail
+          echo '56a9e388180d902687cb1e5e11810be3bf736e266ea31cc1c522d7ce0012c748  ci/northlight-db-replay-bundle.tar.gz' | sha256sum --check --strict
+
+      - name: Expand secret-scanned database candidate bundle
+        run: tar -xzf ci/northlight-db-replay-bundle.tar.gz
+
+      - name: Verify PostgreSQL tools
+        run: |
+          set -euo pipefail
+          psql --version
+          pg_dump --version
+          pg_restore --version
+
+      - name: Verify migration and recovery manifests
+        run: node scripts/verify-database-manifests.mjs
+
+      - name: Replay from empty PostgreSQL 17
+        run: bash scripts/database-replay.sh
