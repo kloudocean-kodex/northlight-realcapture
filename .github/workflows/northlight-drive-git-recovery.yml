@@ -9,7 +9,7 @@ on:
       - northlight-production
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   verify-drive-git:
@@ -78,8 +78,52 @@ jobs:
           test "$(git --git-dir="$gitdir" show -s --format=%P "$expected_head")" = "$expected_parent"
           test "$(git --git-dir="$gitdir" show -s --format=%T "$expected_head")" = "$expected_tree"
           test "$(git --git-dir="$gitdir" show -s --format=%T "$expected_parent")" = "$expected_baseline_tree"
-          test "$(git --git-dir="$gitdir" hash-object -t commit "$gitdir/objects/5f/26a32c15bc7394ed2c7aee22b0c42ea3b180f5" 2>/dev/null || true)" != "$expected_head" || true
           git --git-dir="$gitdir" fsck --no-reflogs --connectivity-only "$expected_head"
           echo "Exact local checkpoint object graph verified: $expected_head"
           echo "Checkpoint tree: $expected_tree"
           echo "Local baseline tree: $expected_baseline_tree"
+
+      - name: Dry-run and publish only the exact remediation ref
+        if: github.event_name == 'push' && github.ref == 'refs/heads/northlight-combined-verify-20260821'
+        env:
+          GH_RECOVERY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate="$(find /tmp/northlight-drive-git -type f -name HEAD -not -path '*/logs/*' -print -quit)"
+          test -n "$candidate"
+          gitdir="$(dirname "$candidate")"
+          target_ref='refs/heads/remediation/ultimate-production-20260819'
+          prod_ref='refs/heads/northlight-production'
+          expected_head='5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5'
+          expected_prod='1c9696a463c2d12acf5b5ffe839bd8aa9d75f80f'
+          remote_url="https://x-access-token:${GH_RECOVERY_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git ls-remote --heads "$remote_url" | sort > /tmp/heads-before.txt
+          prod_before="$(awk -v ref="$prod_ref" '$2 == ref {print $1}' /tmp/heads-before.txt)"
+          target_before="$(awk -v ref="$target_ref" '$2 == ref {print $1}' /tmp/heads-before.txt)"
+          test "$prod_before" = "$expected_prod"
+          if [ -n "$target_before" ] && [ "$target_before" != "$expected_head" ]; then
+            echo "::error::Ref $target_ref already exists at unexpected SHA $target_before"
+            exit 1
+          fi
+
+          if [ "$target_before" = "$expected_head" ]; then
+            echo "Exact remediation ref is already published; push is a no-op."
+          else
+            git --git-dir="$gitdir" push --dry-run "$remote_url" "$expected_head:$target_ref"
+            git --git-dir="$gitdir" push "$remote_url" "$expected_head:$target_ref"
+          fi
+
+          git ls-remote --heads "$remote_url" | sort > /tmp/heads-after.txt
+          prod_after="$(awk -v ref="$prod_ref" '$2 == ref {print $1}' /tmp/heads-after.txt)"
+          target_after="$(awk -v ref="$target_ref" '$2 == ref {print $1}' /tmp/heads-after.txt)"
+          test "$prod_after" = "$expected_prod"
+          test "$target_after" = "$expected_head"
+
+          grep -vF "$(printf '\t%s' "$target_ref")" /tmp/heads-before.txt > /tmp/heads-before-other.txt || true
+          grep -vF "$(printf '\t%s' "$target_ref")" /tmp/heads-after.txt > /tmp/heads-after-other.txt || true
+          diff -u /tmp/heads-before-other.txt /tmp/heads-after-other.txt
+
+          echo "Published exact remediation ref: $target_after"
+          echo "Production ref remained frozen: $prod_after"
+          echo "No unrelated branch ref changed during recovery publish."
