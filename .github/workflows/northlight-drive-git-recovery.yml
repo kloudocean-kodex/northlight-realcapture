@@ -1,0 +1,53 @@
+name: Northlight Drive Git Recovery Verification
+
+on:
+  push:
+    branches:
+      - northlight-combined-verify-20260821
+
+permissions:
+  contents: read
+
+jobs:
+  verify-drive-git:
+    name: Verify exact Drive Git checkpoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout verification branch
+        uses: actions/checkout@v6
+
+      - name: Install Drive downloader
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --quiet 'gdown==5.2.0'
+
+      - name: Download shared .git snapshot only
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/northlight-drive-git
+          mkdir -p /tmp/northlight-drive-git
+          gdown --folder --remaining-ok 'https://drive.google.com/drive/folders/1wsoxgfPnj_svTxaCtb63FzE0U4g0L181' -O /tmp/northlight-drive-git
+
+      - name: Verify checkpoint object graph without pushing
+        run: |
+          set -euo pipefail
+          gitdir='/tmp/northlight-drive-git'
+          if [ ! -f "$gitdir/HEAD" ]; then
+            candidate="$(find /tmp/northlight-drive-git -type f -name HEAD -print -quit)"
+            test -n "$candidate"
+            gitdir="$(dirname "$candidate")"
+          fi
+          expected_branch='refs/heads/remediation/ultimate-production-20260819'
+          expected_head='5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5'
+          expected_parent='1160cc20044b26a0017df1eb281198b416b9735d'
+          expected_tree='9d2058d9f68b3bf8dac6755d94820cb6aaacabf2'
+          test "$(cat "$gitdir/HEAD")" = "ref: $expected_branch"
+          test "$(cat "$gitdir/$expected_branch")" = "$expected_head"
+          test "$(git --git-dir="$gitdir" cat-file -t "$expected_head")" = commit
+          test "$(git --git-dir="$gitdir" cat-file -t "$expected_parent")" = commit
+          test "$(git --git-dir="$gitdir" show -s --format=%P "$expected_head")" = "$expected_parent"
+          test "$(git --git-dir="$gitdir" show -s --format=%T "$expected_head")" = "$expected_tree"
+          test "$(git --git-dir="$gitdir" show -s --format=%T "$expected_parent")" = 'f3827ce4c8107173e04044d9fe9b65e3b2f026f9'
+          git --git-dir="$gitdir" fsck --no-reflogs --connectivity-only "$expected_head"
+          echo "Exact local checkpoint object graph verified: $expected_head"
