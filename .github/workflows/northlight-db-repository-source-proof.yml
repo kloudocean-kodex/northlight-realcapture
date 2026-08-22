@@ -79,10 +79,10 @@ jobs:
           {
             printf '%s\n' '\set ON_ERROR_STOP on' '\echo NORTHLIGHT_REPOSITORY_SOURCE_REPLAY_BEGIN'
             while read -r hash file; do
-              printf "\\echo 'BEGIN %s sha256=%s'\n" "$file" "$hash"
+              printf '%s\n' "\\echo 'BEGIN ${file} sha256=${hash}'"
               printf '%s\n' '\set ON_ERROR_STOP on'
               cat "$file"
-              printf "\n\\echo 'END %s'\n\n" "$file"
+              printf '\n%s\n\n' "\\echo 'END ${file}'"
             done < supabase/reconciled-source.sha256
             printf '%s\n' '\echo NORTHLIGHT_REPOSITORY_SOURCE_REPLAY_COMPLETE'
           } > /tmp/northlight-repository-source-replay.sql
