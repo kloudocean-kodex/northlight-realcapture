@@ -48,6 +48,24 @@ test('team workload is truthful and never fabricates progress from an unknown ca
   assert.match(quiet.documentElement.textContent,/Photographer/);
 });
 
+test('demo presentation curates validation records without changing workflow identity',()=>{
+  const h=createAppHarness(),boot={users:[
+    {id:'admin-uat',name:'UAT Seed Admin uat-20260822151051',email:'uat.seed.admin.uat-20260822151051@northlight.local',role_code:'admin',active:true},
+    {id:'photo-uat',name:'UAT Photographer uat-20260822151051',email:'uat.photographer.uat-20260822151051@northlight.local',role_code:'photographer',active:true},
+    {id:'audit-agent',name:'AUDIT Agent 20260819',email:'audit-agent-20260819@northlight.local',role_code:'agent',active:true}
+  ],services:[{code:'photos',name:'Photography'}],providers:[]};
+  const task={id:'task-uat',task_no:'RC-2001',property_name:'UAT Collins Workflow uat-20260822151051',address:'1 Audit Way',suburb:'Toorak',status:'confirmed',scheduled_start:'2027-01-15T00:30:00.000Z',photographer_user_id:'photo-uat',service_codes:['photos']};
+  h.run(`state.session=${JSON.stringify({role:'admin',userId:'admin-uat',name:'UAT Seed Admin uat-20260822151051',email:'uat.seed.admin.uat-20260822151051@northlight.local'})};state.bootstrap=${JSON.stringify(boot)};state.tasks=[${JSON.stringify(task)}];state.view='tasks'`);
+  const frame=parseHTML(h.run('appFrame()')),team=parseHTML(h.run('teamView()')),row=parseHTML(h.run('taskRow(state.tasks[0])'));
+  const visible=[frame,team,row].map(x=>x.documentElement.textContent).join(' ');
+  assert.match(visible,/Maya Patel/);
+  assert.match(visible,/Jordan Lee/);
+  assert.match(visible,/Collins Street Apartment/);
+  assert.doesNotMatch(visible,/UAT|AUDIT|Audit Way|uat-|audit-agent|1234 test/i);
+  assert.equal(h.run('presentTask(state.tasks[0]).id'),'task-uat');
+  assert.equal(h.run('visibleTeam(state.bootstrap.users).map(x=>x.id).join(",")'),'admin-uat,photo-uat');
+});
+
 test('roles explain protected access in human language instead of internal permission codes',()=>{
   const h=createAppHarness();
   h.run(`state.bootstrap={roles:[{code:'admin',name:'Admin',permissions:['all_tasks','manage_users','view_raw','manage_finance']}]}`);
