@@ -54,7 +54,7 @@ async function signedRequest(path, session = {}) {
 
 test('per-user PBKDF2 passwords verify correctly and reject another password', async () => {
   const hash = await hashPBKDF2('Northlight personal password 2026');
-  assert.match(hash, /^pbkdf2\$210000\$/);
+  assert.match(hash, /^pbkdf2cf\$100000\$3\$/);
   assert.equal(await verifyPBKDF2('Northlight personal password 2026', hash), true);
   assert.equal(await verifyPBKDF2('different password', hash), false);
 });
@@ -199,7 +199,7 @@ test('password migration verifies the legacy bootstrap credential and commits th
   assert.equal(migration.payload.p_tenant_id, tenantId);
   assert.equal(migration.payload.p_user_id, userId);
   assert.equal(migration.payload.p_expected_password_hash, 'scrypt$legacy-placeholder');
-  assert.match(migration.payload.p_new_password_hash, /^pbkdf2\$210000\$/);
+  assert.match(migration.payload.p_new_password_hash, /^pbkdf2cf\$100000\$3\$/);
   assert.equal(calls.filter(call => call.route === 'northlight_complete_password_migration').length, 1);
 });
 
@@ -222,19 +222,27 @@ test('forced credential setup is non-dismissible, skips bootstrap, and puts Cale
 
 test('database migration owns atomic limiter and credential transition contracts', async () => {
   const sql = await readFile(new URL('../supabase/migrations/20260821142600_northlight_auth_rate_and_credential_migration.sql', import.meta.url), 'utf8');
+  const cloudflareKdf = await readFile(new URL('../supabase/migrations/20260822150627_northlight_cloudflare_password_kdf.sql', import.meta.url), 'utf8');
   assert.match(sql, /pg_advisory_xact_lock/);
   assert.match(sql, /northlight_begin_login_attempt/);
   assert.match(sql, /northlight_reset_login_attempt/);
   assert.match(sql, /auth_must_change_password boolean not null default true/);
   assert.match(sql, /credential_version bigint not null default 0/);
   assert.match(sql, /northlight_complete_password_migration/);
+  assert.match(cloudflareKdf, /pbkdf2cf/);
   assert.match(sql, /password_hash is distinct from p_expected_password_hash/);
-  assert.match(sql, /auth_must_change_password = false/);
+  assert.match(cloudflareKdf, /auth_must_change_password = false/);
 });
 
 test('every migrated role keeps an optional password-change control after onboarding', async () => {
   const ux = await readFile(new URL('../assets/ux-runtime.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../assets/runtime.css', import.meta.url), 'utf8');
+  const adminUsers = await readFile(new URL('../functions/api/admin/users.js', import.meta.url), 'utf8');
+  const app = await readFile(new URL('../assets/app-v2.js', import.meta.url), 'utf8');
+  assert.match(adminUsers, /auth_must_change_password:false/);
+  assert.match(adminUsers, /password_scheme:'pbkdf2cf'/);
+  assert.match(app, /Starter password/);
+  assert.match(app, /signs the team member straight in/);
   assert.match(ux, /btn\.id='changePasswordBtn'/);
   assert.match(ux, /aria-label','Change password'/);
   assert.match(ux, /\/api\/auth\/change-password/);

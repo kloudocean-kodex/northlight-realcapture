@@ -48,7 +48,7 @@ async function resetAttempt(env, key) {
 async function credentialMatches(password, user, env) {
   if (!user || user.active === false || password.length > 128) return false;
   const stored = String(user.password_hash || '');
-  if (stored.startsWith('pbkdf2$')) return verifyPBKDF2(password, stored);
+  if (stored.startsWith('pbkdf2$') || stored.startsWith('pbkdf2cf$')) return verifyPBKDF2(password, stored);
   if (stored.startsWith('scrypt$') && env.PILOT_LOGIN_PASSWORD) {
     return safeEqual(password, String(env.PILOT_LOGIN_PASSWORD));
   }

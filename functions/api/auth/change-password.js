@@ -48,7 +48,7 @@ export async function onRequestPost({ request, env }) {
 
     const stored = String(user.password_hash || '');
     let valid = false;
-    if (stored.startsWith('pbkdf2$')) valid = await verifyPBKDF2(currentPassword, stored);
+    if (stored.startsWith('pbkdf2$') || stored.startsWith('pbkdf2cf$')) valid = await verifyPBKDF2(currentPassword, stored);
     else if (stored.startsWith('scrypt$') && env.PILOT_LOGIN_PASSWORD) {
       valid = await safeEqual(currentPassword, String(env.PILOT_LOGIN_PASSWORD));
     }

@@ -129,7 +129,8 @@
     "20260821142500_northlight_calendar_sync_watch_leases.sql",
     "20260821142600_northlight_auth_rate_and_credential_migration.sql",
     "20260821142700_northlight_photographer_availability_onboarding.sql",
-    "20260821142800_northlight_runtime_pilot_key_hashes.sql"
+    "20260821142800_northlight_runtime_pilot_key_hashes.sql",
+    "20260822150627_northlight_cloudflare_password_kdf.sql"
   ],
   "localCandidateMigrationSha256": {
     "20260819102500_northlight_task_handoff_outbox.sql": "765eb1b3e503e72f2066d3e8eb2d51c8a24a53db0e11d3cd44cd00e7dccba7ce",
@@ -161,7 +162,8 @@
     "20260821142500_northlight_calendar_sync_watch_leases.sql": "304ea2072a02a07e998dd966773618a3c90d239d821dbfd6a432b05ef3fc191e",
     "20260821142600_northlight_auth_rate_and_credential_migration.sql": "28b6b1d66b5881ebde1cca8790792fef87202a694fd50b6136d09994fd222e65",
     "20260821142700_northlight_photographer_availability_onboarding.sql": "2b5ade09124d4a050cff297dcb3d13d638e338bcb0ad2166dcd3c389d08368a7",
-    "20260821142800_northlight_runtime_pilot_key_hashes.sql": "b1ef705c1f22dce07acdbe13da0be36a32ac7ffea4d802cb6c105e14f6e0af19"
+    "20260821142800_northlight_runtime_pilot_key_hashes.sql": "b1ef705c1f22dce07acdbe13da0be36a32ac7ffea4d802cb6c105e14f6e0af19",
+    "20260822150627_northlight_cloudflare_password_kdf.sql": "6791bc1915c0edf656e702c6f6444d7cc279814fba986bc0da062b0d8b89e236"
   },
   "requiredEvidence": [
     "compatibility_foundation_provenance_documented",
