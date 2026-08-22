@@ -95,7 +95,7 @@ jobs:
           echo "catalog_relations=$relations"
           test "$relations" = '34'
           psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
-          do $$
+          do $assert$
           declare
             v_def text;
             v_plaintext_pattern boolean;
@@ -109,12 +109,12 @@ jobs:
                and p.proname = 'northlight_pilot_allowed'
                and pg_catalog.pg_get_function_identity_arguments(p.oid) = '';
             if v_def is null then raise exception 'northlight_pilot_allowed_missing'; end if;
-            v_plaintext_pattern := v_def ~ $$in\s*\(\s*'[^']+'\s*,\s*'[^']+'\s*\)$$;
+            v_plaintext_pattern := v_def ~ $regex$in\s*\(\s*'[^']+'\s*,\s*'[^']+'\s*\)$regex$;
             if v_plaintext_pattern then raise exception 'pilot_key_plaintext_shape_survived'; end if;
             select count(*) into v_hash_rows from northlight_private.pilot_key_hashes;
             if v_hash_rows <> 2 then raise exception 'pilot_key_hash_count_%', v_hash_rows; end if;
           end
-          $$;
+          $assert$;
           SQL
 
       - name: Logical backup and restore rehearsal
