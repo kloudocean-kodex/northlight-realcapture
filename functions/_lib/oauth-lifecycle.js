@@ -244,6 +244,15 @@ function identityChanged(provider, current, account) {
   return false;
 }
 
+function storedScopesSatisfy(provider, metadata = {}) {
+  const required = OAUTH_SCOPES[provider] || [];
+  if (!required.length) return true;
+  const granted = new Set(Array.isArray(metadata.granted_scopes) ? metadata.granted_scopes : []);
+  const satisfies = scope => granted.has(scope)
+    || (scope === 'email' && granted.has('https://www.googleapis.com/auth/userinfo.email'));
+  return required.every(scope => satisfies(scope));
+}
+
 function userIdentityChanged(current, account) {
   if (!current || current.status !== 'connected') return false;
   const metadata = current.metadata || {};
@@ -303,6 +312,7 @@ export async function verifySharedOAuthConnection(env, provider) {
   const currentTenant = await tenant(env);
   const current = await integration(env, provider);
   if (!current || current.status !== 'connected') throw new Error('oauth_connection_generation_changed');
+  if (!storedScopesSatisfy(provider, current.metadata)) throw new Error(`${provider}_required_scope_missing`);
   const account = provider === 'google'
     ? await googleAccount(token)
     : provider === 'dropbox'

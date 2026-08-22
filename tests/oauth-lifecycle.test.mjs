@@ -424,6 +424,7 @@ test('integration verification cannot resurrect a connection fenced by concurren
     metadata: {
       access_token: accessCiphertext,
       access_expires_at: Date.now() + 3600000,
+      granted_scopes: ['openid', 'email', 'https://www.googleapis.com/auth/gmail.compose'],
       google_sub: 'google-account-1',
       email: 'ops@example.test'
     }
@@ -448,6 +449,40 @@ test('integration verification cannot resurrect a connection fenced by concurren
   await assert.rejects(verifySharedOAuthConnection(env, 'google'), /oauth_connection_generation_changed/);
   assert.match(verificationQuery, /status=eq\.connected/);
   assert.match(verificationQuery, /refresh_generation=eq\.12/);
+});
+
+test('Google Workspace verification requires stored Gmail compose grant before reporting ready', async () => {
+  const accessCiphertext = await seal('workspace-access-secret', env.TOKEN_ENCRYPTION_KEY);
+  const row = {
+    tenant_id: tenantId,
+    provider: 'google',
+    status: 'connected',
+    account_label: 'ops@example.test',
+    refresh_generation: 12,
+    metadata: {
+      access_token: accessCiphertext,
+      access_expires_at: Date.now() + 3600000,
+      granted_scopes: ['openid', 'email'],
+      google_sub: 'google-account-1',
+      email: 'ops@example.test'
+    }
+  };
+  let profileCalls = 0;
+  globalThis.fetch = async (input, options = {}) => {
+    const url = new URL(String(input));
+    const route = url.pathname.split('/').pop();
+    if (url.origin === 'https://db.test') {
+      if (route === 'tenants') return json([{ id: tenantId, slug: 'realcapture' }]);
+      if (route === 'integration_state' && (options.method || 'GET') === 'GET') return json([row]);
+    }
+    if (url.origin === 'https://www.googleapis.com') {
+      profileCalls += 1;
+      return json({ id: 'google-account-1', email: 'ops@example.test', verified_email: true });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  await assert.rejects(verifySharedOAuthConnection(env, 'google'), /google_required_scope_missing/);
+  assert.equal(profileCalls, 0, 'a missing durable Gmail grant should fail before a provider profile call');
 });
 
 test('Xero reconnect and verification select only the already-bound organisation', async () => {

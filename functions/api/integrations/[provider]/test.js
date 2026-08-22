@@ -17,7 +17,7 @@ function verificationError(provider, exception) {
     return error(409, 'The integration changed during verification. Reload its status and try again.', { code: 'INTEGRATION_CHANGED' });
   }
   if (new RegExp(`${provider}_(not_connected|refresh_token_missing)`, 'i').test(message)
-    || /oauth_40[013]|invalid_access_token|invalid_token|expired_access_token|unauthorized/i.test(message)) {
+    || /required_scope_missing|oauth_40[013]|invalid_access_token|invalid_token|expired_access_token|unauthorized/i.test(message)) {
     return error(409, `${label} needs to be reconnected to restore one-time setup.`, { code: 'INTEGRATION_RECONNECT_REQUIRED' });
   }
   if (new RegExp(`${provider}_429|rate_limit|ratelimit`, 'i').test(message)) {

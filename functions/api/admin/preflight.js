@@ -1,16 +1,28 @@
 import { requireSession, json, error, tenant, integration, supa } from '../../_lib/core.js';
 import { oauthOrigin } from '../../_lib/oauth-security.js';
+import { OAUTH_SCOPES } from '../../_lib/oauth-security.js';
 
 const yes = value => Boolean(value);
-function providerView(row,{durable=false}={}) {
+function scopeReady(provider, row) {
+  if (!row || row.status !== 'connected') return null;
+  const required = OAUTH_SCOPES[provider] || [];
+  if (!required.length) return true;
+  const granted = new Set(Array.isArray(row.metadata?.granted_scopes) ? row.metadata.granted_scopes : []);
+  const satisfies = scope => granted.has(scope)
+    || (scope === 'email' && granted.has('https://www.googleapis.com/auth/userinfo.email'));
+  return required.every(satisfies);
+}
+function providerView(row,{provider,durable=false}={}) {
   const status = row?.status || 'not_connected';
   const connected = status === 'connected';
   const refreshReady = !durable || Boolean(row?.metadata?.refresh_token);
+  const scopesReady = provider ? scopeReady(provider, row) : true;
   return {
     status,
     account: row?.account_label || null,
-    needsReconnect: connected && !refreshReady,
-    refreshReady: connected ? refreshReady : null
+    needsReconnect: connected && (!refreshReady || scopesReady === false),
+    refreshReady: connected ? refreshReady : null,
+    scopeReady: connected ? scopesReady : null
   };
 }
 
@@ -66,9 +78,9 @@ export async function onRequestGet({ request, env }) {
       },
       environment,
       integrations: {
-        dropbox: providerView(dropbox, { durable: true }),
-        sharedGoogle: providerView(google, { durable: true }),
-        xero: providerView(xero, { durable: true }),
+        dropbox: providerView(dropbox, { provider: 'dropbox', durable: true }),
+        sharedGoogle: providerView(google, { provider: 'google', durable: true }),
+        xero: providerView(xero, { provider: 'xero', durable: true }),
         whatsapp: { status: whatsapp?.status || 'disabled' },
         userCalendars: {
           connected: connectedCalendars.length,
