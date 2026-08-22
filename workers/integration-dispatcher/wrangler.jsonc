@@ -4,6 +4,15 @@
   "main": "src/index.js",
   "compatibility_date": "2026-08-21",
   "compatibility_flags": ["nodejs_compat"],
+  "keep_vars": true,
+  "secrets": {
+    "required": [
+      "NORTHLIGHT_DEMO_KEY",
+      "TOKEN_ENCRYPTION_KEY",
+      "DROPBOX_APP_SECRET",
+      "GOOGLE_CLIENT_SECRET"
+    ]
+  },
   "queues": {
     "producers": [
       {
