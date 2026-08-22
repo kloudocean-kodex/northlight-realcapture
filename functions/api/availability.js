@@ -14,6 +14,18 @@ async function snapshot(env, tenantId, userId) {
   return { profile: profileRows?.[0] || null, onboarding: onboarding || null };
 }
 
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])]));
+  }
+  return value;
+}
+
+function sameJson(left, right) {
+  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+}
+
 export async function onRequestGet({ request, env }) {
   const auth = await requireSession(request, env, ['photographer']);
   if (auth.error) return auth.error;
@@ -36,6 +48,25 @@ export async function onRequestPatch({ request, env }) {
     }
     const availability = normalizeAvailabilityProfile(input);
     const currentTenant = await tenant(env);
+    const current = (await supa(env, 'provider_profiles', {
+      query: `select=user_id,working_hours,days_off,special_days,timezone,availability_version,availability_updated_at&tenant_id=eq.${encodeURIComponent(currentTenant.id)}&user_id=eq.${encodeURIComponent(auth.session.userId)}&limit=1`
+    }))?.[0];
+    if (!current) return error(409, 'Photographer setup must be completed before availability can be saved.');
+    if (Number(current.availability_version) !== expectedVersion) {
+      return error(409, 'Availability changed in another session. Reload before saving again.');
+    }
+    if (
+      sameJson(current.working_hours || {}, availability.workingHours)
+      && sameJson(current.days_off || [], availability.daysOff)
+      && sameJson(current.special_days || [], availability.specialDays)
+      && String(current.timezone || '') === availability.timeZone
+    ) {
+      const onboarding = await supa(env, 'rpc/northlight_photographer_onboarding_status', {
+        method: 'POST',
+        payload: { p_tenant_id: currentTenant.id, p_user_id: auth.session.userId }
+      });
+      return json({ profile: current, onboarding, reused: true });
+    }
     const updated = await supa(env, 'rpc/northlight_update_provider_availability', {
       method: 'POST',
       payload: {

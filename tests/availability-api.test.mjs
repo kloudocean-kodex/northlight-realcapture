@@ -77,6 +77,22 @@ test('save normalizes input and binds actor, target, tenant and expected version
   assert.deepEqual(update.payload.p_working_hours, { mon: ['08:00', '17:00'], fri: ['09:00', '15:00'] });
 });
 
+test('saving unchanged availability is idempotent and does not bump the profile version', async () => {
+  const calls = install();
+  const response = await onRequestPatch({ request: await request('PATCH', {
+    expectedVersion: 3,
+    workingHours: { mon: ['08:00', '17:00'] },
+    daysOff: [],
+    specialDays: [],
+    timeZone: 'Australia/Melbourne'
+  }), env });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.reused, true);
+  assert.equal(data.profile.availability_version, 3);
+  assert.equal(calls.some(call => call.route === 'northlight_update_provider_availability'), false);
+});
+
 test('invalid time, all-closed weeks and stale versions fail without a successful update', async () => {
   let calls = install();
   let response = await onRequestPatch({ request: await request('PATCH', { expectedVersion: 3, workingHours: { mon: ['17:00', '08:00'] }, daysOff: [], specialDays: [], timeZone: 'Australia/Melbourne' }), env });
@@ -84,7 +100,7 @@ test('invalid time, all-closed weeks and stale versions fail without a successfu
   assert.equal(calls.some(call => call.route === 'northlight_update_provider_availability'), false);
 
   calls = install({ updateFailure: 'availability_version_changed' });
-  response = await onRequestPatch({ request: await request('PATCH', { expectedVersion: 3, workingHours: { mon: ['08:00', '17:00'] }, daysOff: [], specialDays: [], timeZone: 'Australia/Melbourne' }), env });
+  response = await onRequestPatch({ request: await request('PATCH', { expectedVersion: 3, workingHours: { mon: ['08:00', '17:00'], fri: ['09:00', '15:00'] }, daysOff: [], specialDays: [], timeZone: 'Australia/Melbourne' }), env });
   assert.equal(response.status, 409);
   assert.match((await response.json()).error, /changed/i);
 });
