@@ -54,8 +54,11 @@ export async function onRequestPost({ request, env }) {
         return error(404, 'File not found.');
       }
       let link;
+      let currentMetadata;
       try {
-        link = await dropboxRequest(env, 'files/get_temporary_link', { path: releaseFile.path || releaseFile.provider_file_id });
+        const releasePath = releaseFile.path || releaseFile.provider_file_id;
+        link = await dropboxRequest(env, 'files/get_temporary_link', { path: releasePath });
+        currentMetadata = await dropboxRequest(env, 'files/get_metadata', { path: releasePath, include_deleted: false });
       } catch (providerError) {
         const providerMessage = String(providerError?.message || '');
         if (providerMessage.includes('dropbox_409') && providerMessage.includes('not_found')) {
@@ -64,7 +67,7 @@ export async function onRequestPost({ request, env }) {
         throw providerError;
       }
       try {
-        verifyTemporaryLinkMetadata(releaseFile, link?.metadata);
+        verifyTemporaryLinkMetadata(releaseFile, currentMetadata || link?.metadata);
       } catch (verificationError) {
         if (verificationError.message === 'approved_release_diverged') {
           return error(409, 'This approved file changed in Dropbox. Northlight blocked the link to protect the approved release.');

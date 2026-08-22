@@ -323,7 +323,9 @@ test('SQL selector records the manifest before the one atomic approved_release_i
   assert.match(sql, /approved_release_immutable/);
   assert.match(sql, /'reused', true/);
   assert.match(status, /idempotent:true/);
-  assert.match(link, /files\/get_temporary_link'[\s\S]*releaseFile\.path \|\| releaseFile\.provider_file_id/);
+  assert.match(link, /const releasePath = releaseFile\.path \|\| releaseFile\.provider_file_id/);
+  assert.match(link, /files\/get_temporary_link'[\s\S]*path: releasePath/);
+  assert.match(link, /files\/get_metadata'[\s\S]*include_deleted: false/);
   assert.equal(normalizeDropboxEntry({
     '.tag': 'file',
     id: 'id:release-must-not-enter-mutable-index',
