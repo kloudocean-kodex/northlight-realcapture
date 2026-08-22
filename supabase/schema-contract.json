@@ -1,5 +1,5 @@
 {
-  "formatVersion": 2,
+  "formatVersion": 1,
   "capturedAt": "2026-08-22",
   "target": {
     "platform": "Supabase",
@@ -8,9 +8,10 @@
     "productionInspectionWasReadOnly": true
   },
   "reproducibility": {
-    "fromEmptyDatabase": true,
+    "fromEmptyDatabase": false,
     "releaseBlocking": true,
     "reasons": [
+      "historical_exact_foundation_sql_remains_unrecovered",
       "live_production_to_candidate_upgrade_rehearsal_not_yet_executed",
       "security_and_performance_advisors_after_staging_rc_not_yet_executed"
     ],
@@ -31,6 +32,11 @@
       "historicalCloudArchivesUsableAsAuthoritativeSource": false
     },
     "catalogSnapshotClassification": "sanitized_reconstructed_current_state_not_historical_sql",
+    "currentStateReconstruction": {
+      "fromEmptyDatabase": true,
+      "classification": "sanitized_compatibility_foundation_plus_candidate_migrations",
+      "status": "passed"
+    },
     "cleanRoomEvidence": {
       "branch": "northlight-db-source-reconciliation-20260822",
       "proofCommit": "60cad09ca3035e946b297cb05cdb58145a28e267",
