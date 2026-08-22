@@ -271,6 +271,7 @@ test('authorization URLs request only the capabilities Northlight actually uses'
   const dropbox = new URL(buildProviderAuthorizationUrl(env, {
     provider: 'dropbox', origin: canonicalOrigin, state: 's', codeChallenge: challenge
   }));
+  assert.equal(dropbox.searchParams.get('token_access_type'), 'offline');
   assert.deepEqual(new Set(dropbox.searchParams.get('scope').split(' ')), new Set([
     'account_info.read', 'files.metadata.read', 'files.content.read', 'files.content.write'
   ]));

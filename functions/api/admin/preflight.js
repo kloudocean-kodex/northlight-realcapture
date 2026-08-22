@@ -2,6 +2,17 @@ import { requireSession, json, error, tenant, integration, supa } from '../../_l
 import { oauthOrigin } from '../../_lib/oauth-security.js';
 
 const yes = value => Boolean(value);
+function providerView(row,{durable=false}={}) {
+  const status = row?.status || 'not_connected';
+  const connected = status === 'connected';
+  const refreshReady = !durable || Boolean(row?.metadata?.refresh_token);
+  return {
+    status,
+    account: row?.account_label || null,
+    needsReconnect: connected && !refreshReady,
+    refreshReady: connected ? refreshReady : null
+  };
+}
 
 export async function onRequestGet({ request, env }) {
   const auth = await requireSession(request, env, ['admin']);
@@ -55,9 +66,9 @@ export async function onRequestGet({ request, env }) {
       },
       environment,
       integrations: {
-        dropbox: { status: dropbox?.status || 'not_connected', account: dropbox?.account_label || null },
-        sharedGoogle: { status: google?.status || 'not_connected', account: google?.account_label || null },
-        xero: { status: xero?.status || 'not_connected', account: xero?.account_label || null },
+        dropbox: providerView(dropbox, { durable: true }),
+        sharedGoogle: providerView(google, { durable: true }),
+        xero: providerView(xero, { durable: true }),
         whatsapp: { status: whatsapp?.status || 'disabled' },
         userCalendars: {
           connected: connectedCalendars.length,
