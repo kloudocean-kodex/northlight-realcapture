@@ -60,7 +60,7 @@ const demoTextReplacements=Object.freeze([
 ]);
 function demoText(value=''){
   const source=String(value??'');
-  if(!/(uat-20260822151051|audit-20260819|audit agent|audit way|uat lifecycle|uat seed|uat photographer|uat agent|uat editor|uat owner|1234 test rd)/i.test(source))return source;
+  if(!/(uat-20260822151051|audit-20260819|audit agent|audit way|uat lifecycle|uat seed|uat photographer|uat agent|uat editor|uat owner|1234 test rd|24 albany rd)/i.test(source))return source;
   return demoTextReplacements.reduce((result,[from,to])=>result.replaceAll(from,to),source).replace(/\s{2,}/g,' ').trim();
 }
 function presentUser(user){

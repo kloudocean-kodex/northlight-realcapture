@@ -64,6 +64,7 @@ test('demo presentation curates validation records without changing workflow ide
   assert.doesNotMatch(visible,/UAT|AUDIT|Audit Way|uat-|audit-agent|1234 test/i);
   assert.equal(h.run('presentTask(state.tasks[0]).id'),'task-uat');
   assert.equal(h.run('visibleTeam(state.bootstrap.users).map(x=>x.id).join(",")'),'admin-uat,photo-uat');
+  assert.equal(h.run('demoText("24 Albany Rd VIC 3142")'),'24 Albany Road VIC 3142');
 });
 
 test('roles explain protected access in human language instead of internal permission codes',()=>{
