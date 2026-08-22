@@ -1,0 +1,143 @@
+name: Northlight DB Reconciled Source Proof
+
+on:
+  push:
+    branches:
+      - northlight-db-provenance-audit-20260822
+  pull_request:
+    branches:
+      - remediation/ultimate-production-20260819
+
+permissions:
+  contents: read
+
+jobs:
+  postgres17:
+    name: PostgreSQL 17 reconciled source proof
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: northlight
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d northlight"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/northlight
+    steps:
+      - name: Checkout audit branch and all refs
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Attest immutable remediation base
+        run: |
+          set -euo pipefail
+          expected='31587ba1b0650804aa3ed7b4d6de182ceb1b52e4'
+          git merge-base --is-ancestor "$expected" HEAD
+          test "$(git rev-parse origin/remediation/ultimate-production-20260819)" = "$expected"
+          echo "reconciliation_base=$expected"
+
+      - name: Fetch and verify immutable v9 replay evidence
+        run: |
+          set -euo pipefail
+          curl --location --fail --silent --show-error --max-time 60 \
+            'https://drive.usercontent.google.com/download?id=1WYWe6GaUKa_faeD-eT5jbcsSm96PXaBK&export=download&confirm=t' \
+            -o /tmp/v9-replay.sql
+          curl --location --fail --silent --show-error --max-time 30 \
+            'https://drive.usercontent.google.com/download?id=12Zj81L4bZHEmHPxJcOL7989FL95hPSH3&export=download&confirm=t' \
+            -o /tmp/v9-manifest.json
+          test "$(wc -c </tmp/v9-replay.sql)" -eq 390492
+          test "$(wc -c </tmp/v9-manifest.json)" -eq 11374
+          echo '195130aa9f3ace0091eba3f7ff45a3546689c559abbb250514f2e45d95fdd35d  /tmp/v9-replay.sql' | sha256sum --check --strict
+          echo '04b5c7f329d5541b41c49c718cb14d13220d80beca673c28d254f045af238307  /tmp/v9-manifest.json' | sha256sum --check --strict
+
+      - name: Reconstruct, sanitize, and patch source deterministically
+        run: node .github/scripts/northlight-reconcile-v9.mjs
+
+      - name: Secret-safety assertions
+        run: |
+          set -euo pipefail
+          test -s /tmp/reconciled-source-hashes.json
+          test -s /tmp/reconciled-replay.sql
+          ! grep -R -E 'cfut_[A-Za-z0-9_-]{20,}' /tmp/reconciled
+          ! grep -R -E 'sb_(secret|publishable)_[A-Za-z0-9_-]{20,}' /tmp/reconciled
+          ! grep -R -E 'eyJ[A-Za-z0-9_-]{40,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}' /tmp/reconciled
+          echo 'Known Cloudflare/Supabase/JWT credential shapes absent.'
+
+      - name: Verify PostgreSQL 17 tooling
+        run: |
+          set -euo pipefail
+          server_version="$(psql "$DATABASE_URL" -X -Atqc 'show server_version;')"
+          echo "PostgreSQL server: $server_version"
+          case "$server_version" in 17.*) ;; *) echo '::error::Expected PostgreSQL 17'; exit 1;; esac
+          docker run --rm postgres:17 psql --version
+          docker run --rm postgres:17 pg_dump --version
+          docker run --rm postgres:17 pg_restore --version
+
+      - name: Execute reconciled source replay and contracts
+        run: |
+          set -euo pipefail
+          docker run --rm --network host -v /tmp:/work:ro -e PGPASSWORD=postgres postgres:17 \
+            psql -h 127.0.0.1 -U postgres -d northlight -X -v ON_ERROR_STOP=1 -f /work/reconciled-replay.sql
+
+      - name: Assert final catalog shape and runtime-key hardening
+        run: |
+          set -euo pipefail
+          relations="$(psql "$DATABASE_URL" -X -Atqc "select count(*) from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname in ('public','northlight_private') and c.relkind in ('r','p','v','m','S','f');")"
+          echo "catalog_relations=$relations"
+          test "$relations" = '34'
+          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
+          do $$
+          declare
+            v_def text;
+            v_plaintext_pattern boolean;
+            v_hash_rows integer;
+          begin
+            select pg_catalog.pg_get_functiondef(p.oid)
+              into v_def
+              from pg_catalog.pg_proc p
+              join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+             where n.nspname = 'public'
+               and p.proname = 'northlight_pilot_allowed'
+               and pg_catalog.pg_get_function_identity_arguments(p.oid) = '';
+            if v_def is null then raise exception 'northlight_pilot_allowed_missing'; end if;
+            v_plaintext_pattern := v_def ~ $$in\s*\(\s*'[^']+'\s*,\s*'[^']+'\s*\)$$;
+            if v_plaintext_pattern then raise exception 'pilot_key_plaintext_shape_survived'; end if;
+            select count(*) into v_hash_rows from northlight_private.pilot_key_hashes;
+            if v_hash_rows <> 2 then raise exception 'pilot_key_hash_count_%', v_hash_rows; end if;
+          end
+          $$;
+          SQL
+
+      - name: Logical backup and restore rehearsal
+        run: |
+          set -euo pipefail
+          docker run --rm --network host -v /tmp:/work -e PGPASSWORD=postgres postgres:17 \
+            pg_dump -h 127.0.0.1 -U postgres -d northlight --format=custom --no-owner --no-privileges --file=/work/northlight-reconciled.dump
+          docker run --rm --network host -e PGPASSWORD=postgres postgres:17 createdb -h 127.0.0.1 -U postgres northlight_restore
+          docker run --rm --network host -v /tmp:/work:ro -e PGPASSWORD=postgres postgres:17 \
+            pg_restore -h 127.0.0.1 -U postgres -d northlight_restore --no-owner --no-privileges /work/northlight-reconciled.dump
+          original="$(psql "$DATABASE_URL" -X -Atqc "select count(*) from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname in ('public','northlight_private') and c.relkind in ('r','p','v','m','S','f');")"
+          restored="$(psql postgresql://postgres:postgres@127.0.0.1:5432/northlight_restore -X -Atqc "select count(*) from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname in ('public','northlight_private') and c.relkind in ('r','p','v','m','S','f');")"
+          echo "Catalog relation count original=$original restored=$restored"
+          test "$original" = "$restored"
+
+      - name: Execute proven concurrent-session contracts
+        run: |
+          set -euo pipefail
+          git show origin/northlight-combined-verify-20260821:ci/northlight-db-concurrency.sh > /tmp/northlight-db-concurrency.sh
+          git show origin/northlight-combined-verify-20260821:ci/northlight-auth-migration-concurrency.sh > /tmp/northlight-auth-migration-concurrency.sh
+          chmod +x /tmp/northlight-db-concurrency.sh /tmp/northlight-auth-migration-concurrency.sh
+          DATABASE_URL="$DATABASE_URL" bash /tmp/northlight-db-concurrency.sh
+          DATABASE_URL="$DATABASE_URL" bash /tmp/northlight-auth-migration-concurrency.sh
+
+      - name: Final source proof verdict
+        run: echo RECONCILED_SOURCE_PG17_PROOF_COMPLETE
