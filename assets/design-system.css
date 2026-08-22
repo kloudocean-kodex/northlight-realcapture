@@ -139,6 +139,16 @@ body,button,input,select,textarea{font-family:var(--font-sans)}
 .integration-health .status-orb{margin-top:2px}
 .integration-disconnect{color:var(--red);margin-left:auto}
 
+/* Immutable delivery release: visible protection without operational noise. */
+.approved-release{display:grid;grid-template-columns:38px minmax(0,1fr);gap:12px;align-items:start;margin:2px 0 16px;padding:14px;border:1px solid #cddfd1;border-radius:15px;background:linear-gradient(145deg,#f3f8f3,#edf4ee);color:var(--forest)}
+.approved-release-mark{display:grid;place-items:center;width:36px;height:36px;border-radius:12px;background:#dceadf;color:var(--forest)}
+.approved-release-mark .nl-ico{width:18px;height:18px}
+.approved-release-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.approved-release-title strong{font-size:.78rem}
+.approved-release p{margin:5px 0 4px;color:#4f6559;font-size:.69rem;line-height:1.5}
+.approved-release small{display:block;color:#66776e;font-size:.63rem;font-weight:700;letter-spacing:.02em}
+.approved-stage{background:#dfece2;color:var(--forest)}
+
 /* Required credential migration is a dedicated, non-dismissible first step. */
 .credential-setup .credential-art{background:radial-gradient(circle at 22% 20%,rgba(255,255,255,.08),transparent 38%),linear-gradient(145deg,#173e30,#0d2b20)}
 .credential-form-wrap{padding-block:34px}

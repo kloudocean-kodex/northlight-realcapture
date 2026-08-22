@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
 import {createAppHarness,loadContracts,parseHTML,settle} from './ui-dom-harness.mjs';
 
 const NAV={
@@ -21,7 +22,30 @@ test('role navigation renders the exact desktop destinations and four-tab-plus-M
     assert.equal(dom.querySelectorAll('.mobile-nav [data-mobile-more]').length,expected.length>4?1:0,`${role} More control`);
     assert.equal(dom.querySelectorAll('.mobile-nav [aria-current="page"]').length,1,`${role} current page`);
     assert.ok(dom.querySelectorAll('.mobile-nav button').length<=5,`${role} mobile navigation remains calm`);
+    assert.equal(dom.querySelector('.sidebar').getAttribute('aria-label'),'Northlight workspace');
   }
+});
+
+test('Dropbox activity wording separates index retirement from provider file deletion',()=>{
+  const h=createAppHarness();
+  assert.equal(h.run(`activityMessage({type:'dropbox_file_deleted',detail:{path:'/Northlight/NL-1/01_RAW/PHOTOS/front.jpg',deleted_prefix:'/Northlight'}})`),'Dropbox index refreshed · front.jpg retired from the previous index');
+  assert.equal(h.run(`activityMessage({type:'dropbox_file_deleted',detail:{path:'/Northlight/NL-1/01_RAW/PHOTOS/front.jpg'}})`),'Dropbox file no longer available · front.jpg');
+  assert.equal(h.run(`activityMessage({type:'dropbox_file_changed',detail:{path:'/Northlight/NL-1/02_EDITED/PHOTOS/front.jpg'}})`),'Dropbox updated · front.jpg');
+});
+
+test('approved final media explains the protected release snapshot',async()=>{
+  const h=createAppHarness(),box=h.document.createElement('div');box.id='secureFiles';h.document.body.appendChild(box);
+  h.run(`state.session=${JSON.stringify({role:'agent',userId:'agent-1',name:'Agent A'})};state.bootstrap={services:[{code:'photos',name:'Photography'}]}`);
+  h.responses.push({data:{stages:['03_FINAL','04_REFERENCE'],approvedRelease:{id:'32e6605d-6a43-482a-83db-b78a9da54620',fileCount:1,approvedAt:'2026-08-22T17:00:00.000Z',protected:true},files:[{id:'file-1',name:'front.jpg',file_type:'file',stage:'03_FINAL',service_code:'photos',size_bytes:2048}]}});
+  await h.run(`loadFiles('task-1',null)`);
+  const note=h.document.querySelector('.approved-release');assert.ok(note);assert.equal(note.getAttribute('role'),'note');assert.match(note.textContent,/Approved release/);assert.match(note.textContent,/Source-folder edits cannot change/);assert.match(note.textContent,/Release 32E6605D/);assert.match(h.document.querySelector('.approved-stage').textContent,/Approved/);
+});
+
+test('revision and issue success paths refetch the task without routine page reloads',async()=>{
+  const source=await readFile(new URL('../assets/ux-runtime.js',import.meta.url),'utf8');
+  assert.match(source,/await refreshTask\(taskId\);toast\('Revision requested'/);
+  assert.match(source,/await refreshTask\(taskId\);toast\('Issue raised'/);
+  assert.doesNotMatch(source,/setTimeout\(\(\)=>location\.reload\(\),(?:700|800)\)/);
 });
 
 test('workflow actions and upload stages obey the complete role, ownership and lifecycle matrix',()=>{
