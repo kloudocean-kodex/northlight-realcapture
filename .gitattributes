@@ -1,0 +1,33 @@
+# Enforce LF for all source files to guarantee reproducible SHA-256 hashes
+# across Windows, Linux and macOS checkouts.
+
+* text=auto eol=lf
+
+# Explicit: SQL migrations MUST be LF (schema-contract hashes depend on this)
+*.sql text eol=lf
+
+# JavaScript / JSON / YAML / Markdown
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.jsonc text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.svg text eol=lf
+*.toml text eol=lf
+
+# Shell scripts
+*.sh text eol=lf
+
+# Binaries
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
