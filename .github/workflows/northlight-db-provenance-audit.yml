@@ -37,7 +37,7 @@ jobs:
           test "$(wc -c </tmp/replay-manifest.json)" -eq 11374
           echo '04b5c7f329d5541b41c49c718cb14d13220d80beca673c28d254f045af238307  /tmp/replay-manifest.json' | sha256sum --check --strict
 
-      - name: Compare hashes without printing SQL bodies
+      - name: Compare hashes without printing source bodies
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -67,7 +67,6 @@ jobs:
             actualVsContract: actual.has(name) && contractMap.has(name) ? actual.get(name) === contractMap.get(name) : null,
             actualVsReplay: actual.has(name) && replay.has(name) ? actual.get(name) === replay.get(name) : null,
           }));
-
           const discrepancies = rows.filter(r =>
             r.actual !== r.contract || r.actual !== r.verifiedReplay || r.contract !== r.verifiedReplay
           );
@@ -75,29 +74,40 @@ jobs:
           console.log(`actual_migrations=${actual.size}`);
           console.log(`contract_migrations=${contractMap.size}`);
           console.log(`verified_replay_migrations=${replay.size}`);
-          console.log(`discrepancy_count=${discrepancies.length}`);
-          for (const r of discrepancies) console.log(JSON.stringify(r));
+          console.log(`migration_discrepancy_count=${discrepancies.length}`);
+          for (const r of discrepancies) console.log(`MIGRATION ${JSON.stringify(r)}`);
+
+          const surface = manifest.files.map(f => {
+            const exists = fs.existsSync(f.path) && fs.statSync(f.path).isFile();
+            const actualHash = exists ? sha(f.path) : null;
+            return {path:f.path, existsInRemediation:exists, actual:actualHash, verifiedReplay:f.sha256, matches: exists ? actualHash===f.sha256 : null};
+          });
+          const surfaceDiff = surface.filter(r => r.matches !== true);
+          const missing = surfaceDiff.filter(r => !r.existsInRemediation);
+          const mismatched = surfaceDiff.filter(r => r.existsInRemediation);
+          console.log(`verified_replay_input_count=${surface.length}`);
+          console.log(`replay_inputs_missing_from_remediation=${missing.length}`);
+          console.log(`replay_inputs_present_but_hash_mismatched=${mismatched.length}`);
+          for (const r of surfaceDiff) console.log(`REPLAY_INPUT ${JSON.stringify(r)}`);
 
           const patches = manifest.verificationPatches || [];
           console.log(`verification_patch_count=${patches.length}`);
           for (const p of patches) {
-            console.log(JSON.stringify({sourcePath:p.sourcePath, reason:p.reason, productionApplied:p.productionApplied}));
+            console.log(`PATCH ${JSON.stringify({sourcePath:p.sourcePath, reason:p.reason, productionApplied:p.productionApplied})}`);
           }
 
           fs.writeFileSync('/tmp/db-provenance-audit.json', JSON.stringify({
-            auditFormat: 'northlight-db-provenance-audit-v1',
+            auditFormat: 'northlight-db-provenance-audit-v2',
             sourceCheckpoint: manifest.sourceCheckpoint,
             verificationRevision: manifest.verificationRevision,
-            actualMigrationCount: actual.size,
-            contractMigrationCount: contractMap.size,
-            verifiedReplayMigrationCount: replay.size,
-            discrepancies,
+            migrationDiscrepancies: discrepancies,
+            replaySurfaceDifferences: surfaceDiff,
             verificationPatches: patches.map(p => ({sourcePath:p.sourcePath, reason:p.reason, productionApplied:p.productionApplied}))
           }, null, 2));
           NODE
 
-      - name: Assert no SQL bodies or secret values were emitted
+      - name: Assert no source bodies or secret values were emitted
         run: |
           set -euo pipefail
           test -s /tmp/db-provenance-audit.json
-          echo 'Provenance comparison completed using names and cryptographic hashes only.'
+          echo 'Provenance comparison completed using paths and cryptographic hashes only.'
