@@ -49,41 +49,47 @@ function sectionFor(file) {
 const recovered = new Map();
 for (const file of manifest.files) recovered.set(file.path, sectionFor(file));
 
-// Never persist the historical access-key material contained in the forensic
-// compatibility source. The clean-room foundation uses deterministic fake keys;
-// the later runtime-key migration still proves the same hash-table transition.
+// Never persist historical access-key material from forensic compatibility
+// inputs or tests. Replace the recovered values consistently with deterministic
+// clean-room fixtures, while keeping the runtime hash-table migration behavior.
 const keyA = 'northlight-cleanroom-key-a-000001';
 const keyB = 'northlight-cleanroom-key-b-000002';
 const dualPath = 'supabase/compatibility-foundation/20260818064358_northlight_cloud_dual_access_key.sql';
 const currentPath = 'supabase/compatibility-foundation/20260818093422_allow_current_cloud_and_local_demo_keys.sql';
 const corePath = 'supabase/compatibility-foundation/20260816153506_northlight_pilot_core_schema.sql';
-const originals = [];
+const replacements = new Map();
 
 for (const filePath of [dualPath, currentPath]) {
   const source = recovered.get(filePath);
   const match = source.match(/\bin\s*\(\s*'([^']+)'\s*,\s*'([^']+)'\s*\)/i);
   if (!match || match[1].length < 16 || match[2].length < 16) throw new Error(`unexpected historical key source shape ${filePath}`);
-  originals.push(match[1], match[2]);
-  const changed = source.replace(match[0], `in ('${keyA}', '${keyB}')`);
-  if (changed === source) throw new Error(`historical key sanitation failed ${filePath}`);
-  recovered.set(filePath, changed);
+  if (replacements.has(match[1]) && replacements.get(match[1]) !== keyA) throw new Error('inconsistent recovered primary key mapping');
+  if (replacements.has(match[2]) && replacements.get(match[2]) !== keyB) throw new Error('inconsistent recovered secondary key mapping');
+  replacements.set(match[1], keyA);
+  replacements.set(match[2], keyB);
 }
 
 {
   const source = recovered.get(corePath);
   const match = source.match(/(encode\s*\(\s*digest\([\s\S]*?\)\s*,\s*'hex'\s*\)\s*=\s*)'([^']+)'/i);
   if (!match) throw new Error('unexpected core key-hash source shape');
-  originals.push(match[2]);
   const fakeHash = crypto.createHash('sha256').update(keyA, 'utf8').digest('hex');
-  recovered.set(corePath, source.replace(match[0], match[1] + `'${fakeHash}'`));
+  replacements.set(match[2], fakeHash);
 }
 
-for (const oldValue of originals) {
+for (const [filePath, source] of recovered) {
+  let changed = source;
+  for (const [oldValue, replacement] of replacements) changed = changed.split(oldValue).join(replacement);
+  recovered.set(filePath, changed);
+}
+
+for (const oldValue of replacements.keys()) {
   if (!oldValue) continue;
   for (const [filePath, source] of recovered) {
     if (source.includes(oldValue)) throw new Error(`historical credential material survived sanitation in ${filePath}`);
   }
 }
+if (!recovered.get(dualPath).includes(keyA) || !recovered.get(currentPath).includes(keyB)) throw new Error('clean-room key fixtures absent');
 
 const auth = recovered.get(authPath);
 for (const required of [
