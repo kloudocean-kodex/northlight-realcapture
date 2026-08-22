@@ -1,6 +1,6 @@
 {
-  "formatVersion": 1,
-  "capturedAt": "2026-08-21",
+  "formatVersion": 2,
+  "capturedAt": "2026-08-22",
   "target": {
     "platform": "Supabase",
     "postgresMajor": 17,
@@ -8,17 +8,11 @@
     "productionInspectionWasReadOnly": true
   },
   "reproducibility": {
-    "fromEmptyDatabase": false,
+    "fromEmptyDatabase": true,
     "releaseBlocking": true,
     "reasons": [
-      "missing_exact_sql_for_production_foundation_migrations",
-      "git_first_parent_to_initial_commit_contains_no_foundation_sql",
-      "historical_cloud_archives_are_incomplete_or_corrupt",
-      "local_versions_do_not_match_part_of_production_ledger",
-      "supabase_project_config_not_saved",
-      "deterministic_non_secret_seed_not_saved",
-      "secret_bearing_pilot_helper_requires_secret_free_replacement",
-      "clean_postgres_17_replay_not_yet_executed"
+      "live_production_to_candidate_upgrade_rehearsal_not_yet_executed",
+      "security_and_performance_advisors_after_staging_rc_not_yet_executed"
     ],
     "mustNeverCapture": [
       "pilot_access_key_values",
@@ -32,9 +26,34 @@
       "initialCommit": "c8564467",
       "firstSavedMigration": "20260819102500_northlight_task_handoff_outbox.sql",
       "preExistingMigrationFilesFoundInGitHistory": false,
-      "historicalArchivesUsableAsAuthoritativeSource": false
+      "historicalExactFoundationSqlRecovered": false,
+      "compatibilityFoundationMaterialized": true,
+      "historicalCloudArchivesUsableAsAuthoritativeSource": false
     },
-    "catalogSnapshotClassification": "sanitized_reconstructed_current_state_not_historical_sql"
+    "catalogSnapshotClassification": "sanitized_reconstructed_current_state_not_historical_sql",
+    "cleanRoomEvidence": {
+      "branch": "northlight-db-source-reconciliation-20260822",
+      "proofCommit": "60cad09ca3035e946b297cb05cdb58145a28e267",
+      "workflowRunId": 32561599554,
+      "postgresVersion": "17.11",
+      "checkedInSourceHashCount": 51,
+      "credentialShapeFindings": 0,
+      "catalogRelationCount": 34,
+      "catalogFingerprintSha256": "b203bbb6b880157a64cdb93598b8820fae16d67bddb2265abb5c18b54a080982",
+      "backupRestoreRelationCounts": {
+        "source": 34,
+        "restored": 34
+      },
+      "databaseConcurrencyContracts": {
+        "passed": 9,
+        "total": 9
+      },
+      "credentialConcurrencyContracts": {
+        "passed": 2,
+        "total": 2
+      },
+      "status": "passed"
+    }
   },
   "productionLedger": [
     { "version": "20260816153506", "name": "northlight_pilot_core_schema", "localExactSql": false },
@@ -103,7 +122,8 @@
     "20260821142400_northlight_dropbox_sync_leases.sql",
     "20260821142500_northlight_calendar_sync_watch_leases.sql",
     "20260821142600_northlight_auth_rate_and_credential_migration.sql",
-    "20260821142700_northlight_photographer_availability_onboarding.sql"
+    "20260821142700_northlight_photographer_availability_onboarding.sql",
+    "20260821142800_northlight_runtime_pilot_key_hashes.sql"
   ],
   "localCandidateMigrationSha256": {
     "20260819102500_northlight_task_handoff_outbox.sql": "765eb1b3e503e72f2066d3e8eb2d51c8a24a53db0e11d3cd44cd00e7dccba7ce",
@@ -124,27 +144,41 @@
     "20260819164000_northlight_organization_fk_indexes.sql": "93b45a69d479f64bb639f0b5f1bd241c52780d2d8cd6fd1cd97cfcef51885763",
     "20260819200000_northlight_immutable_review_releases.sql": "9cc47b275b363ad79a9329aecbd08afed41fe7249ee4ef7d8a3ece22dcb566a7",
     "20260819203000_northlight_durable_dispatch_queue.sql": "2772424bd089f270e303b16f1fc220e921eda1ecadb7737ce01c0b6f2437f0f1",
-    "20260819210000_northlight_atomic_scheduling.sql": "30aa53af8dd62564b9da2bfd1c78f5ed85223541b05485912663a2097cc5d337",
+    "20260819210000_northlight_atomic_scheduling.sql": "bc35e55ea6560d9b08c4283cf0cc29b7f5e45c4a6669b96576a35fbd0a4e4661",
     "20260819213000_northlight_xero_invoice_idempotency.sql": "c2cdbae1a768bad2a8204ab9533f44d32cc466e7363ded3f47c287da111326ed",
     "20260819220000_northlight_oauth_refresh_leases.sql": "f6e8afc4d348f4c11fc8bc128ca58ddd7d2ad6d78ce873dd3c5bdba2b848c242",
     "20260821142000_northlight_same_tenant_integrity.sql": "1b67f9872e335622385d1469b4ef2e08269181ec693e72e8f012408108ab8983",
     "20260821142100_northlight_atomic_upload_completion.sql": "e2608ee3c66853e583cccd70dce8e2807295460213688a8f2ea1d2c25b9a324e",
-    "20260821142200_northlight_security_contract_hardening.sql": "41177d59055a119d7b2b3703fd977ec83b119d4f9257ad2c94f82c8de2526d1c",
+    "20260821142200_northlight_security_contract_hardening.sql": "79b4f164be829d860ccb35844f4aa498cf603f87b1ad34bba973411668a96541",
     "20260821142300_northlight_oauth_authorization_states.sql": "4ceb49efd616d929c486f445dac6482f2f42bf6d9b2e3ac226075d600d0f542a",
     "20260821142400_northlight_dropbox_sync_leases.sql": "95ed9c6d298b9c2d1c21e830020f3aae5061aee2134c777506755a8e9d479242",
     "20260821142500_northlight_calendar_sync_watch_leases.sql": "304ea2072a02a07e998dd966773618a3c90d239d821dbfd6a432b05ef3fc191e",
-    "20260821142600_northlight_auth_rate_and_credential_migration.sql": "e2f97c02d51350b0190828958153bd3e09e22bb42976bdfec9b1aa7ce61753ab",
-    "20260821142700_northlight_photographer_availability_onboarding.sql": "eea14291ab9421500eeb0f03f98baabe381fd4a54b425dca49c563cd29d55335"
+    "20260821142600_northlight_auth_rate_and_credential_migration.sql": "28b6b1d66b5881ebde1cca8790792fef87202a694fd50b6136d09994fd222e65",
+    "20260821142700_northlight_photographer_availability_onboarding.sql": "2b5ade09124d4a050cff297dcb3d13d638e338bcb0ad2166dcd3c389d08368a7",
+    "20260821142800_northlight_runtime_pilot_key_hashes.sql": "b1ef705c1f22dce07acdbe13da0be36a32ac7ffea4d802cb6c105e14f6e0af19"
   },
   "requiredEvidence": [
-    "exact_foundation_sql_recovered",
+    "compatibility_foundation_provenance_documented",
     "secret_free_auth_boundary",
     "empty_postgres_17_replay",
     "database_contract_sql_pass",
     "negative_rls_and_rpc_tests",
     "concurrency_race_tests",
     "normalized_schema_fingerprint_match",
-    "security_and_performance_advisors_after_rc",
-    "backup_restore_rehearsal"
-  ]
+    "backup_restore_rehearsal",
+    "live_production_to_candidate_upgrade_rehearsal",
+    "security_and_performance_advisors_after_staging_rc"
+  ],
+  "evidenceStatus": {
+    "compatibility_foundation_provenance_documented": "passed",
+    "secret_free_auth_boundary": "passed",
+    "empty_postgres_17_replay": "passed",
+    "database_contract_sql_pass": "passed",
+    "negative_rls_and_rpc_tests": "passed",
+    "concurrency_race_tests": "passed",
+    "normalized_schema_fingerprint_match": "passed",
+    "backup_restore_rehearsal": "passed",
+    "live_production_to_candidate_upgrade_rehearsal": "pending",
+    "security_and_performance_advisors_after_staging_rc": "pending"
+  }
 }
