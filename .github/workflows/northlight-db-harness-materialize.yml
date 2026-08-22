@@ -1,0 +1,53 @@
+name: Northlight DB Harness Materialize
+
+on:
+  push:
+    branches:
+      - northlight-db-provenance-audit-20260822
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    name: Materialize proven race harnesses
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout forensic audit branch and refs
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Hard-fence target branch
+        run: |
+          set -euo pipefail
+          target='northlight-db-source-reconciliation-20260822'
+          expected='104473eeb05528af0eb91f9a103450066348438a'
+          git fetch origin "+refs/heads/${target}:refs/remotes/origin/${target}"
+          test "$(git rev-parse refs/remotes/origin/${target})" = "$expected"
+          test "$target" != 'northlight-production'
+
+      - name: Materialize exact previously-green harnesses
+        run: |
+          set -euo pipefail
+          target='northlight-db-source-reconciliation-20260822'
+          expected='104473eeb05528af0eb91f9a103450066348438a'
+          git switch --detach "$expected"
+          mkdir -p ci
+          git show origin/northlight-combined-verify-20260821:ci/northlight-db-concurrency.sh > ci/northlight-db-concurrency.sh
+          git show origin/northlight-combined-verify-20260821:ci/northlight-auth-migration-concurrency.sh > ci/northlight-auth-migration-concurrency.sh
+          chmod +x ci/northlight-db-concurrency.sh ci/northlight-auth-migration-concurrency.sh
+          test -s ci/northlight-db-concurrency.sh
+          test -s ci/northlight-auth-migration-concurrency.sh
+          ! grep -E 'cfut_[A-Za-z0-9_-]{20,}|sb_(secret|publishable)_[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}' ci/northlight-db-concurrency.sh ci/northlight-auth-migration-concurrency.sh
+          git add ci/northlight-db-concurrency.sh ci/northlight-auth-migration-concurrency.sh
+          test "$(git diff --cached --name-only | wc -l)" -eq 2
+          test "$(git diff --cached --name-only | sort | paste -sd, -)" = 'ci/northlight-auth-migration-concurrency.sh,ci/northlight-db-concurrency.sh'
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: materialize proven PostgreSQL concurrency harnesses'
+          test "$(git rev-parse HEAD^)" = "$expected"
+          new_head="$(git rev-parse HEAD)"
+          git push origin "HEAD:refs/heads/${target}"
+          echo "materialized_harness_head=$new_head"
