@@ -55,7 +55,7 @@ export async function onRequestPost({ request, env }) {
       }
       let link;
       try {
-        link = await dropboxRequest(env, 'files/get_temporary_link', { path: releaseFile.provider_file_id });
+        link = await dropboxRequest(env, 'files/get_temporary_link', { path: releaseFile.path || releaseFile.provider_file_id });
       } catch (providerError) {
         const providerMessage = String(providerError?.message || '');
         if (providerMessage.includes('dropbox_409') && providerMessage.includes('not_found')) {

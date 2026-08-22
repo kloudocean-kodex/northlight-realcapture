@@ -313,6 +313,7 @@ test('Agent authorization rejects every mutable final and only accepts the task-
 test('SQL selector records the manifest before the one atomic approved_release_id switch and never deletes a release', async () => {
   const sql = await readFile(new URL('../supabase/migrations/20260819200000_northlight_immutable_review_releases.sql', import.meta.url), 'utf8');
   const status = await readFile(new URL('../functions/api/tasks/[id]/status.js', import.meta.url), 'utf8');
+  const link = await readFile(new URL('../functions/api/files/link.js', import.meta.url), 'utf8');
   const insertFiles = sql.indexOf('insert into public.media_release_files');
   const approveRelease = sql.indexOf("set status = 'approved', approved_at = now()");
   const selectRelease = sql.indexOf('approved_release_id = p_release_id');
@@ -322,6 +323,7 @@ test('SQL selector records the manifest before the one atomic approved_release_i
   assert.match(sql, /approved_release_immutable/);
   assert.match(sql, /'reused', true/);
   assert.match(status, /idempotent:true/);
+  assert.match(link, /files\/get_temporary_link'[\s\S]*releaseFile\.path \|\| releaseFile\.provider_file_id/);
   assert.equal(normalizeDropboxEntry({
     '.tag': 'file',
     id: 'id:release-must-not-enter-mutable-index',
