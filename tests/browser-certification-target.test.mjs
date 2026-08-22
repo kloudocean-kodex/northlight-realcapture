@@ -23,7 +23,10 @@ test('post-deploy production certification proves Cloudflare serves the same sta
   assert.doesNotMatch(condition,/pull_request|northlight-certification-/);
   assert.match(workflow,/printf '%s\\n' 'dist\/index\.html'/);
   assert.match(workflow,/find dist\/assets -type f -print \| sort/);
-  assert.match(workflow,/curl --location --fail --silent --show-error --max-time 20 "\$base\/\$rel"/);
+  assert.match(workflow,/CURRENT_SHA: \$\{\{ github\.sha \}\}/);
+  assert.match(workflow,/Cache-Control: no-cache/);
+  assert.match(workflow,/\?deployment=\$CURRENT_SHA&attempt=\$attempt/);
+  assert.match(workflow,/for attempt in \$\(seq 1 6\)/);
   assert.match(workflow,/cmp -s "\$file" "\$remote"/);
   assert.match(workflow,/Cloudflare production static UI matches the exact browser-tested artifact/);
 });

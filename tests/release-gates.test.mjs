@@ -24,4 +24,7 @@ test('pre-merge certification proves the candidate locally without demanding und
     /pull_request|northlight-certification-/,
     'a certification PR must not be compared byte-for-byte with the deliberately frozen live production site',
   );
+  assert.match(parityStep, /Cache-Control: no-cache/);
+  assert.match(parityStep, /\?deployment=\$CURRENT_SHA&attempt=\$attempt/);
+  assert.match(parityStep, /for attempt in \$\(seq 1 6\)/);
 });
