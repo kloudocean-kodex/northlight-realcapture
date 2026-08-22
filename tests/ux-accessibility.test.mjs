@@ -35,6 +35,12 @@ test('focus trap cycles forward, backward and safely handles an empty dialog',()
   root.querySelectorAll=()=>[];h.api.trapFocus({key:'Tab',shiftKey:false,preventDefault(){prevented++}},root);assert.equal(h.document.activeElement,root);assert.equal(prevented,3);
 });
 
+test('overlay state locks the background page only while a dialog or drawer is present',()=>{
+  const h=loadUx(),modal=new MiniNode('div',{class:'modal-bg'},h.document);h.document.body.appendChild(modal);
+  h.api.syncOverlayState();assert.equal(h.document.body.classList.contains('overlay-open'),true);
+  modal.remove();h.api.syncOverlayState();assert.equal(h.document.body.classList.contains('overlay-open'),false);
+});
+
 test('login and booking dialogs render native labels, live errors, labelled modal semantics and SVG close controls',()=>{
   const h=createAppHarness(),login=parseHTML(h.run('loginView()'));
   assert.equal(login.querySelector('label[for="email"]').textContent,'Email');assert.ok(login.querySelector('#email'));

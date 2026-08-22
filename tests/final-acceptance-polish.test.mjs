@@ -33,6 +33,53 @@ test('Dropbox activity wording separates index retirement from provider file del
   assert.equal(h.run(`activityMessage({type:'dropbox_file_changed',detail:{path:'/Northlight/NL-1/02_EDITED/PHOTOS/front.jpg'}})`),'Dropbox updated · front.jpg');
 });
 
+test('team workload is truthful and never fabricates progress from an unknown capacity',()=>{
+  const h=createAppHarness(),boot={users:[{id:'agent-1',name:'Avery Agent',email:'avery@example.test',role_code:'agent',active:true},{id:'photo-1',name:'Parker Photographer',email:'parker@example.test',role_code:'photographer',active:true}],services:[],providers:[]};
+  h.run(`state.session=${JSON.stringify({role:'admin',userId:'admin-1',name:'Admin User'})};state.bootstrap=${JSON.stringify(boot)};state.tasks=[${JSON.stringify({id:'task-1',status:'confirmed',agent_user_id:'agent-1',photographer_user_id:'photo-1'})}]`);
+  const active=parseHTML(h.run('teamView()'));
+  assert.equal(active.querySelectorAll('.meter').length,0);
+  assert.equal(active.querySelectorAll('.workload-state.has-work').length,2);
+  assert.match(active.documentElement.textContent,/1 active assignment/);
+  h.run('state.tasks=[]');
+  const quiet=parseHTML(h.run('teamView()'));
+  assert.equal(quiet.querySelectorAll('.workload-state.has-work').length,0);
+  assert.match(quiet.documentElement.textContent,/No active assignments/);
+  assert.doesNotMatch(quiet.documentElement.textContent,/Available/);
+  assert.match(quiet.documentElement.textContent,/Photographer/);
+});
+
+test('roles explain protected access in human language instead of internal permission codes',()=>{
+  const h=createAppHarness();
+  h.run(`state.bootstrap={roles:[{code:'admin',name:'Admin',permissions:['all_tasks','manage_users','view_raw','manage_finance']}]}`);
+  const dom=parseHTML(h.run('rolesView()'));
+  assert.equal(dom.querySelectorAll('.permission-list li').length,4);
+  assert.match(dom.documentElement.textContent,/View all tasks/);
+  assert.match(dom.documentElement.textContent,/Manage team accounts/);
+  assert.match(dom.documentElement.textContent,/View source media/);
+  assert.match(dom.documentElement.textContent,/Manage finance/);
+  assert.doesNotMatch(dom.documentElement.textContent,/all_tasks|manage_users|view_raw|manage_finance/);
+});
+
+test('booking presents a labelled five-business-day schedule with status and a protected validation note',()=>{
+  const h=createAppHarness(),boot={users:[{id:'photo-1',name:'Parker Photographer'}],services:[],providers:[]};
+  const scheduled=h.run('nextBusinessDays(1)[0].toISOString()');
+  h.run(`state.session=${JSON.stringify({role:'admin',userId:'admin-1',name:'Admin User'})};state.bootstrap=${JSON.stringify(boot)};state.tasks=[${JSON.stringify({id:'task-1',property_name:'10 Collins Street',status:'reschedule_requested',scheduled_start:'REPLACE',photographer_user_id:'photo-1'}).replace('REPLACE',scheduled)}]`);
+  const dom=parseHTML(h.run('bookingView()'));
+  assert.equal(dom.querySelectorAll('.schedule-day').length,5);
+  assert.ok(dom.querySelector('#scheduleTitle'));
+  assert.match(dom.querySelector('.schedule-job').textContent,/10 Collins Street/);
+  assert.match(dom.querySelector('.schedule-job').textContent,/reschedule requested/i);
+  assert.match(dom.querySelector('.schedule-note').textContent,/protected travel buffers/);
+});
+
+test('service selection exposes a pressed state and a visible check treatment hook',()=>{
+  const h=createAppHarness(),boot={users:[],providers:[],services:[{code:'photos',name:'Photography',duration_min:60,buffer_before_min:10,buffer_after_min:10,active:true}]};
+  h.run(`state.session=${JSON.stringify({role:'agent',userId:'agent-1',name:'Agent A'})};state.bootstrap=${JSON.stringify(boot)};state.wizard={step:2,services:['photos'],agentId:'agent-1',area:'Inner East',slotAvailable:false};drawWizard()`);
+  const service=h.document.querySelector('[data-service="photos"]');
+  assert.equal(service.getAttribute('aria-pressed'),'true');
+  assert.ok(service.querySelector('.service-selection svg'));
+});
+
 test('approved final media explains the protected release snapshot',async()=>{
   const h=createAppHarness(),box=h.document.createElement('div');box.id='secureFiles';h.document.body.appendChild(box);
   h.run(`state.session=${JSON.stringify({role:'agent',userId:'agent-1',name:'Agent A'})};state.bootstrap={services:[{code:'photos',name:'Photography'}]}`);

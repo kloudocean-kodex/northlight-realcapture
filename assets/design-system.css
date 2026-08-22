@@ -13,6 +13,10 @@
 
 html{font-family:var(--font-sans);text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased}
 body,button,input,select,textarea{font-family:var(--font-sans)}
+body{font-feature-settings:"cv02","cv03","cv04","cv11";font-variant-numeric:tabular-nums}
+body.overlay-open{overflow:hidden;overscroll-behavior:none}
+h1,h2,h3,h4{text-wrap:balance}
+p{ text-wrap:pretty }
 .eyebrow{color:var(--eyebrow);font-weight:800}
 .login-art .eyebrow{color:#c5d4cb}
 .nav .section{color:#5a675f}
@@ -46,6 +50,75 @@ body,button,input,select,textarea{font-family:var(--font-sans)}
 .more-nav-item.active{border-color:var(--forest);background:#edf3ee}
 .more-nav-item .nl-ico:last-child{width:15px;height:15px;color:var(--muted)}
 .toast{overflow-wrap:anywhere}
+
+/* The desktop rail keeps identity and essential actions visible at shorter heights. */
+.sidebar{overflow:hidden}
+.sidebar .mark,.sidebar-user,.sidebar-crafted{flex:none}
+.sidebar .mark{min-height:38px}
+.sidebar .nav{min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-right:3px;scrollbar-width:thin;scrollbar-color:#c8cec9 transparent}
+.sidebar-user{margin-top:16px;min-width:0}
+.sidebar-user>div:last-child{min-width:0}
+.sidebar-user strong,.sidebar-user span{overflow-wrap:anywhere;line-height:1.3}
+
+/* Truthful team workload: no decorative progress bar without a real capacity denominator. */
+.person-button{display:flex;flex-direction:column;min-height:142px;overflow:hidden}
+.person-button .person-top{width:100%;min-width:0}
+.person-button .person-top>div:last-child{min-width:0}
+.person-button h4,.person-button p{overflow-wrap:anywhere}
+.person-card-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;margin-top:auto;padding-top:16px}
+.person-card-footer>.nl-ico{width:15px;height:15px;color:var(--muted)}
+.workload-state{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:.69rem;font-weight:720}
+.workload-state i{width:8px;height:8px;border-radius:50%;background:#7b8981;box-shadow:0 0 0 4px rgba(123,137,129,.11)}
+.workload-state.has-work{color:var(--forest)}
+.workload-state.has-work i{background:#2f7453;box-shadow:0 0 0 4px rgba(47,116,83,.12)}
+.view-detail{display:inline-flex;align-items:center;gap:4px;color:var(--forest);font-size:.69rem;font-weight:800;white-space:nowrap}
+.view-detail .nl-ico{width:13px;height:13px}
+
+/* A calmer, more legible five-day booking strip. */
+.schedule-section{display:grid;gap:14px}
+.schedule-overview{display:flex;align-items:end;justify-content:space-between;gap:18px}
+.schedule-overview h2{margin:5px 0 0;font-size:1.12rem;letter-spacing:-.02em}
+.schedule-days{gap:12px;padding-bottom:5px}
+.schedule-day{padding:0;min-height:190px;overflow:hidden}
+.schedule-day-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:14px 15px 12px;border-bottom:1px solid #e8e5df;background:#faf9f5}
+.schedule-day-head span{color:var(--eyebrow);font-size:.65rem;font-weight:850;letter-spacing:.13em;text-transform:uppercase}
+.schedule-day-head strong{font-size:.75rem}
+.schedule-job{gap:6px;margin:10px;border-color:#dfe2dc;background:#f8faf7;padding:11px;width:calc(100% - 20px)}
+.schedule-job:hover{border-color:#8fa899;background:#f0f5f0;box-shadow:0 7px 18px rgba(23,62,48,.06)}
+.schedule-job-top{display:flex;align-items:center;justify-content:space-between;gap:7px}
+.schedule-job-top>strong{font-size:.78rem}
+.schedule-job-top .badge{flex:0 1 auto;max-width:none;padding:4px 6px;font-size:.54rem;line-height:1.25;text-align:right;white-space:normal;overflow-wrap:anywhere}
+.schedule-property{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.35}
+.schedule-job small{font-size:.66rem;line-height:1.35;overflow-wrap:anywhere}
+.schedule-empty{display:grid;place-items:center;align-content:center;gap:7px;min-height:120px;margin:0;padding:18px;color:var(--muted);text-align:center}
+.schedule-empty span{color:#a7afa9;font-size:1rem}
+.schedule-note{display:flex;align-items:flex-start;gap:9px;margin-top:16px}
+.schedule-note .nl-ico{width:16px;height:16px;margin-top:1px;color:var(--forest)}
+
+/* Access language is for people; enforcement remains at the API. */
+.role-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.role-card{display:flex;flex-direction:column}
+.role-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.role-card h3{margin:16px 0 3px;font-size:1.05rem}
+.role-summary{margin:0 0 15px;color:var(--muted);font-size:.72rem}
+.permission-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:0;padding:0;list-style:none}
+.permission-list li{display:flex;align-items:flex-start;gap:7px;min-width:0;padding:9px 10px;border:1px solid #e7e3da;border-radius:11px;background:#faf9f5;color:#46564d;font-size:.68rem;font-weight:680;line-height:1.4}
+.permission-list .nl-ico{width:14px;height:14px;margin-top:1px;color:var(--forest)}
+
+/* Selected services must read as selected without relying on a subtle tint alone. */
+.service-selection{position:absolute;top:11px;right:11px;display:none;place-items:center;width:23px;height:23px;border-radius:8px;background:var(--forest);color:#fff}
+.service-selection .nl-ico{width:13px;height:13px}
+.service[aria-pressed="true"]{border-color:#4e745e;background:#edf3ee;box-shadow:inset 0 0 0 1px #4e745e}
+.service[aria-pressed="true"] .service-selection{display:grid}
+.service[aria-pressed="true"] .service-icon{background:var(--forest);color:#fff}
+.booking-protection-note{margin-top:18px}
+
+/* Overlays hold attention and keep the final wizard action in reach. */
+.drawer-bg,.modal-bg{backdrop-filter:blur(2px)}
+.drawer-head h2{overflow-wrap:anywhere}
+.modal{max-height:min(90vh,900px);max-height:min(90dvh,900px)}
+.wizard-actions{position:sticky;bottom:-24px;z-index:3;margin:24px -24px -24px;padding:14px 24px;border-top:1px solid var(--line);background:rgba(244,241,234,.96);backdrop-filter:blur(14px)}
+.attention-item:not(button){cursor:default}
 
 /* Photographer-owned availability: a quiet, task-focused control centre. */
 .availability-hero{align-items:center}
@@ -178,6 +251,7 @@ body,button,input,select,textarea{font-family:var(--font-sans)}
   .task-mobile-meta{display:block}
   .availability-shell{grid-template-columns:1fr}
   .availability-aside{position:static;grid-row:1}
+  .role-grid{grid-template-columns:1fr}
 }
 
 @media(max-width:760px){
@@ -189,6 +263,7 @@ body,button,input,select,textarea{font-family:var(--font-sans)}
   .availability-exception[data-exception="special-hours"]{grid-template-columns:1fr auto}
   .availability-exception[data-exception="special-hours"] .availability-time-range{grid-column:1}
   .availability-exception[data-exception="special-hours"] .exception-remove{grid-column:2;grid-row:1/3}
+  .permission-list{grid-template-columns:1fr}
 }
 
 @media(max-width:560px){
@@ -200,6 +275,10 @@ body,button,input,select,textarea{font-family:var(--font-sans)}
   .availability-savebar .btn{width:100%}
   .availability-time-range{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)}
   .compact-field input{padding:10px 8px}
+  .schedule-overview{align-items:flex-start;flex-direction:column}
+  .person-card-footer{align-items:flex-start;flex-direction:column}
+  .view-detail{align-self:flex-end}
+  .wizard-actions{bottom:-24px}
 }
 
 @media(forced-colors:active){
