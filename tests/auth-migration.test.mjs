@@ -238,10 +238,13 @@ test('every migrated role keeps an optional password-change control after onboar
   const ux = await readFile(new URL('../assets/ux-runtime.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../assets/runtime.css', import.meta.url), 'utf8');
   const adminUsers = await readFile(new URL('../functions/api/admin/users.js', import.meta.url), 'utf8');
+  const adminUserUpdate = await readFile(new URL('../functions/api/admin/users/[id].js', import.meta.url), 'utf8');
   const app = await readFile(new URL('../assets/app-v2.js', import.meta.url), 'utf8');
   assert.match(adminUsers, /auth_must_change_password:false/);
   assert.match(adminUsers, /password_scheme:'pbkdf2cf'/);
   assert.match(adminUsers, /Starter password must be at least 12 characters/);
+  assert.match(adminUserUpdate, /try\s*\{\s*await logEvent\(env,\s*\{\s*type:\s*'team_member_updated'/);
+  assert.match(adminUserUpdate, /catch\s*\{\s*\}\s*[\r\n\s]*return json\(\{ ok: true, user: await user\(env, current\.id\) \}\)/);
   assert.doesNotMatch(adminUsers, /Temporary password must be at least 12 characters/);
   assert.match(app, /Starter password/);
   assert.match(app, /signs the team member straight in/);
