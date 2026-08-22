@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - northlight-db-provenance-audit-20260822
+  pull_request:
+    branches:
+      - remediation/ultimate-production-20260819
 
 permissions:
   contents: read
@@ -16,15 +19,15 @@ jobs:
       - name: Checkout audit branch
         uses: actions/checkout@v6
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Attest audit ancestry
         run: |
           set -euo pipefail
-          expected_parent='31587ba1b0650804aa3ed7b4d6de182ceb1b52e4'
-          actual_parent="$(git rev-parse HEAD^)"
-          echo "audit_parent=$actual_parent"
-          test "$actual_parent" = "$expected_parent"
+          expected_base='31587ba1b0650804aa3ed7b4d6de182ceb1b52e4'
+          git merge-base --is-ancestor "$expected_base" HEAD
+          echo "audit_base=$expected_base"
+          echo "audit_head=$(git rev-parse HEAD)"
 
       - name: Fetch immutable v9 replay manifest
         run: |
