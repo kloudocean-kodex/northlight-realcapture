@@ -221,7 +221,6 @@ export async function publishReviewRelease(
   }
 
   const sourceFiles = await listDropboxFiles(request, `${String(task.dropbox_path).replace(/\/$/, '')}/02_EDITED`);
-  if (sourceFiles.length !== plan.files.length) fail('review_publish_source_changed');
   const sourcesById = new Map(sourceFiles.map(metadata => [String(metadata.id || ''), metadata]));
   for (const file of plan.files) {
     const source = sourcesById.get(file.providerFileId);

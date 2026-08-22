@@ -211,6 +211,28 @@ test('retry after an ambiguous accepted copy reuses the same verified release wi
   }
 });
 
+test('extra unselected edited source files do not block the selected approved manifest', async () => {
+  const { request, state } = dropboxMock();
+  state.put({
+    '.tag': 'file',
+    id: 'id:stale-edited-export',
+    rev: 'stale-r1',
+    content_hash: 'c'.repeat(64),
+    size: 303,
+    path_display: `${base}/02_EDITED/PHOTOS/old-export.jpg`,
+    name: 'old-export.jpg',
+  });
+
+  const publication = await publishReviewRelease({}, task, edited, releaseId, {
+    request,
+    sleep: async () => {},
+  });
+
+  assert.equal(publication.manifest.length, edited.length);
+  assert.equal(publication.copiedCount, edited.length);
+  assert.equal(publication.manifest.some(file => file.name === 'old-export.jpg'), false);
+});
+
 test('an existing destination with the wrong hash is rejected and cannot become the manifest', async () => {
   const { request, state } = dropboxMock();
   state.put({
