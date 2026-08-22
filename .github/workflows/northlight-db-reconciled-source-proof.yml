@@ -72,6 +72,16 @@ jobs:
           ! grep -R -E 'eyJ[A-Za-z0-9_-]{40,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}' /tmp/reconciled
           echo 'Known Cloudflare/Supabase/JWT credential shapes absent.'
 
+      - name: Upload sanitized source candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: northlight-sanitized-db-source-candidate
+          path: |
+            /tmp/reconciled
+            /tmp/reconciled-source-hashes.json
+          retention-days: 1
+          if-no-files-found: error
+
       - name: Verify PostgreSQL 17 tooling
         run: |
           set -euo pipefail
