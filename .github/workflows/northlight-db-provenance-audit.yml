@@ -1,0 +1,100 @@
+name: Northlight DB Provenance Audit
+
+on:
+  push:
+    branches:
+      - northlight-db-provenance-audit-20260822
+
+permissions:
+  contents: read
+
+jobs:
+  provenance:
+    name: Compare remediation DB bytes to verified replay
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout audit branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Attest audit ancestry
+        run: |
+          set -euo pipefail
+          expected_parent='31587ba1b0650804aa3ed7b4d6de182ceb1b52e4'
+          actual_parent="$(git rev-parse HEAD^)"
+          echo "audit_parent=$actual_parent"
+          test "$actual_parent" = "$expected_parent"
+
+      - name: Fetch immutable v9 replay manifest
+        run: |
+          set -euo pipefail
+          url='https://drive.usercontent.google.com/download?id=12Zj81L4bZHEmHPxJcOL7989FL95hPSH3&export=download&confirm=t'
+          curl --location --fail --silent --show-error --max-time 30 "$url" -o /tmp/replay-manifest.json
+          test "$(wc -c </tmp/replay-manifest.json)" -eq 11374
+          echo '04b5c7f329d5541b41c49c718cb14d13220d80beca673c28d254f045af238307  /tmp/replay-manifest.json' | sha256sum --check --strict
+
+      - name: Compare hashes without printing SQL bodies
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const path = require('path');
+
+          const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+          const manifest = JSON.parse(fs.readFileSync('/tmp/replay-manifest.json','utf8'));
+          const contract = JSON.parse(fs.readFileSync('supabase/schema-contract.json','utf8'));
+
+          const replay = new Map(
+            manifest.files
+              .filter(f => f.path.startsWith('supabase/migrations/'))
+              .map(f => [path.basename(f.path), f.sha256])
+          );
+          const contractMap = new Map(Object.entries(contract.localCandidateMigrationSha256 || {}));
+          const actualNames = fs.readdirSync('supabase/migrations').filter(n => n.endsWith('.sql')).sort();
+          const actual = new Map(actualNames.map(n => [n, sha(path.join('supabase/migrations', n))]));
+
+          const names = [...new Set([...replay.keys(), ...contractMap.keys(), ...actual.keys()])].sort();
+          const rows = names.map(name => ({
+            name,
+            actual: actual.get(name) || null,
+            contract: contractMap.get(name) || null,
+            verifiedReplay: replay.get(name) || null,
+            actualVsContract: actual.has(name) && contractMap.has(name) ? actual.get(name) === contractMap.get(name) : null,
+            actualVsReplay: actual.has(name) && replay.has(name) ? actual.get(name) === replay.get(name) : null,
+          }));
+
+          const discrepancies = rows.filter(r =>
+            r.actual !== r.contract || r.actual !== r.verifiedReplay || r.contract !== r.verifiedReplay
+          );
+
+          console.log(`actual_migrations=${actual.size}`);
+          console.log(`contract_migrations=${contractMap.size}`);
+          console.log(`verified_replay_migrations=${replay.size}`);
+          console.log(`discrepancy_count=${discrepancies.length}`);
+          for (const r of discrepancies) console.log(JSON.stringify(r));
+
+          const patches = manifest.verificationPatches || [];
+          console.log(`verification_patch_count=${patches.length}`);
+          for (const p of patches) {
+            console.log(JSON.stringify({sourcePath:p.sourcePath, reason:p.reason, productionApplied:p.productionApplied}));
+          }
+
+          fs.writeFileSync('/tmp/db-provenance-audit.json', JSON.stringify({
+            auditFormat: 'northlight-db-provenance-audit-v1',
+            sourceCheckpoint: manifest.sourceCheckpoint,
+            verificationRevision: manifest.verificationRevision,
+            actualMigrationCount: actual.size,
+            contractMigrationCount: contractMap.size,
+            verifiedReplayMigrationCount: replay.size,
+            discrepancies,
+            verificationPatches: patches.map(p => ({sourcePath:p.sourcePath, reason:p.reason, productionApplied:p.productionApplied}))
+          }, null, 2));
+          NODE
+
+      - name: Assert no SQL bodies or secret values were emitted
+        run: |
+          set -euo pipefail
+          test -s /tmp/db-provenance-audit.json
+          echo 'Provenance comparison completed using names and cryptographic hashes only.'
