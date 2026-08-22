@@ -1,5 +1,53 @@
-import{readState,error,supa,tenant}from'../../_lib/core.js';
-import{storeUserOAuth}from'../../_lib/user-integrations.js';
-import{startCalendarWatch}from'../../_lib/calendar-sync.js';
+import { requireSession, supa, tenant } from '../../_lib/core.js';
+import { startCalendarWatch } from '../../_lib/calendar-sync.js';
+import {
+  consumeOAuthAuthorization,
+  oauthAuthorizationCode,
+  oauthFailure,
+  oauthOrigin,
+  oauthSuccess
+} from '../../_lib/oauth-security.js';
+import {
+  commitUserGoogleOAuth,
+  exchangeAuthorizationCode,
+  googleAccount
+} from '../../_lib/oauth-lifecycle.js';
 
-export async function onRequestGet({request,env}){try{const u=new URL(request.url),state=await readState(u.searchParams.get('state'),env.SESSION_SECRET),code=u.searchParams.get('code');if(state.provider!=='google-user'||!state.userId)throw new Error('invalid_google_user_state');if(!code)throw new Error('google_code_missing');const member=(await supa(env,'users',{query:`select=id,role_code,active&id=eq.${encodeURIComponent(state.userId)}&limit=1`}))?.[0];if(!member||member.active===false||member.role_code!=='photographer')throw new Error('photographer_not_active');const r=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({code,client_id:env.GOOGLE_CLIENT_ID,client_secret:env.GOOGLE_CLIENT_SECRET,redirect_uri:`${u.origin}/oauth/google-user/callback`,grant_type:'authorization_code'})}),d=await r.json();if(!r.ok)throw new Error('google_token_exchange_failed');const p=await fetch('https://www.googleapis.com/oauth2/v2/userinfo',{headers:{authorization:`Bearer ${d.access_token}`}}),me=await p.json();if(!p.ok)throw new Error('google_profile_failed');await storeUserOAuth(env,state.userId,'google',{...d,account_label:me.email||'Google Calendar',metadata:{email:me.email}});const t=await tenant(env);await supa(env,'provider_profiles',{method:'PATCH',query:`tenant_id=eq.${t.id}&user_id=eq.${encodeURIComponent(state.userId)}`,payload:{calendar_id:'primary'},prefer:'return=minimal'});await startCalendarWatch(env,state.userId,'primary',u.origin);return Response.redirect(`${u.origin}/?connected=user-google`,302)}catch{return error(400,'Google Calendar connection failed. Return to Northlight and try again.')}}
+export async function onRequestGet({ request, env }) {
+  const auth = await requireSession(request, env, ['photographer']);
+  if (auth.error) return oauthFailure('google-user', auth.error.status === 403 ? 403 : 401);
+  try {
+    const url = new URL(request.url);
+    const authorization = await consumeOAuthAuthorization(env, {
+      request,
+      provider: 'google-user',
+      actorUserId: auth.session.userId,
+      state: url.searchParams.get('state')
+    });
+    const canonicalOrigin = oauthOrigin(request, env);
+    const token = await exchangeAuthorizationCode(env, {
+      provider: 'google-user',
+      origin: canonicalOrigin,
+      code: oauthAuthorizationCode(url),
+      codeVerifier: authorization.codeVerifier
+    });
+    const account = await googleAccount(token.access_token);
+    await commitUserGoogleOAuth(env, {
+      userId: auth.session.userId,
+      token,
+      account,
+      expectedGeneration: authorization.connectionGeneration
+    });
+    const currentTenant = await tenant(env);
+    await supa(env, 'provider_profiles', {
+      method: 'PATCH',
+      query: `tenant_id=eq.${encodeURIComponent(currentTenant.id)}&user_id=eq.${encodeURIComponent(auth.session.userId)}`,
+      payload: { calendar_id: 'primary' },
+      prefer: 'return=minimal'
+    });
+    try { await startCalendarWatch(env, auth.session.userId, 'primary', canonicalOrigin); } catch {}
+    return oauthSuccess(request, env, 'google-user', authorization.returnPath, 'user-google');
+  } catch {
+    return oauthFailure('google-user');
+  }
+}

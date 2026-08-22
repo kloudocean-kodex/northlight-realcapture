@@ -1,3 +1,49 @@
-import{readState,storeOAuth,error}from'../../_lib/core.js';
+import { integration, requireSession } from '../../_lib/core.js';
+import {
+  consumeOAuthAuthorization,
+  oauthAuthorizationCode,
+  oauthFailure,
+  oauthOrigin,
+  oauthSuccess
+} from '../../_lib/oauth-security.js';
+import {
+  commitSharedOAuth,
+  exchangeAuthorizationCode,
+  xeroAccount
+} from '../../_lib/oauth-lifecycle.js';
 
-export async function onRequestGet({request,env}){try{const u=new URL(request.url),state=await readState(u.searchParams.get('state'),env.SESSION_SECRET),code=u.searchParams.get('code');if(state.provider!=='xero')throw new Error('invalid_xero_state');if(!code)throw new Error('xero_code_missing');const auth=btoa(`${env.XERO_CLIENT_ID}:${env.XERO_CLIENT_SECRET}`),r=await fetch('https://identity.xero.com/connect/token',{method:'POST',headers:{authorization:`Basic ${auth}`,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:`${u.origin}/oauth/xero/callback`})}),d=await r.json();if(!r.ok)throw new Error('xero_token_exchange_failed');const cR=await fetch('https://api.xero.com/connections',{headers:{authorization:`Bearer ${d.access_token}`,accept:'application/json'}}),connections=await cR.json();if(!cR.ok)throw new Error('xero_connections_failed');const c=Array.isArray(connections)?connections[0]:null;if(!c)throw new Error('xero_connection_missing');await storeOAuth(env,'xero',{...d,account_label:c.tenantName||'Xero organisation',metadata:{xero_tenant_id:c.tenantId,xero_tenant_name:c.tenantName,xero_tenant_type:c.tenantType,connection_id:c.id}});return Response.redirect(`${u.origin}/?connected=xero`,302)}catch{return error(400,'Xero connection failed. Return to Northlight and try again.')}}
+export async function onRequestGet({ request, env }) {
+  const auth = await requireSession(request, env, ['admin', 'owner']);
+  if (auth.error) return oauthFailure('xero', auth.error.status === 403 ? 403 : 401);
+  try {
+    const url = new URL(request.url);
+    const authorization = await consumeOAuthAuthorization(env, {
+      request,
+      provider: 'xero',
+      actorUserId: auth.session.userId,
+      state: url.searchParams.get('state')
+    });
+    const token = await exchangeAuthorizationCode(env, {
+      provider: 'xero',
+      origin: oauthOrigin(request, env),
+      code: oauthAuthorizationCode(url),
+      codeVerifier: authorization.codeVerifier
+    });
+    const current = await integration(env, 'xero');
+    const expectedTenantId = current?.status === 'connected'
+      && Number(current.refresh_generation || 0) === authorization.connectionGeneration
+      ? current.metadata?.xero_tenant_id
+      : null;
+    const account = await xeroAccount(env, token.access_token, expectedTenantId);
+    await commitSharedOAuth(env, {
+      provider: 'xero',
+      token,
+      account,
+      actorUserId: auth.session.userId,
+      expectedGeneration: authorization.connectionGeneration
+    });
+    return oauthSuccess(request, env, 'xero', authorization.returnPath);
+  } catch {
+    return oauthFailure('xero');
+  }
+}

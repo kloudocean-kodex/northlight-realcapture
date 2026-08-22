@@ -1,7 +1,222 @@
-import{requireSession,error,json,supa,tenant,integration,accessToken,logSync}from'../../_lib/core.js';
+import { requireSession, error, json, supa, tenant, logSync } from '../../_lib/core.js';
+import { xeroRequest, findXeroInvoiceByNumber } from '../../_lib/xero.js';
+import { ensureXeroInvoice } from '../../_lib/durable-xero.js';
 
-async function xeroRequest(env,path,opt={}){const token=await accessToken(env,'xero'),ix=await integration(env,'xero'),tenantId=ix?.metadata?.xero_tenant_id;if(!tenantId)throw new Error('xero_tenant_missing');const r=await fetch(`https://api.xero.com/api.xro/2.0${path}`,{...opt,headers:{authorization:`Bearer ${token}`,'xero-tenant-id':tenantId,accept:'application/json','content-type':'application/json',...(opt.headers||{})}}),txt=await r.text();let d={};try{d=txt?JSON.parse(txt):{}}catch{d={raw:txt}}if(!r.ok)throw new Error(`xero_${r.status}`);return d}
+const encoder = new TextEncoder();
+const proposedIdempotencyKey = () => Array.from(
+  { length: 4 },
+  () => crypto.randomUUID().replace(/-/g, '')
+).join('');
 
-export async function onRequestGet({request,env}){const a=await requireSession(request,env,['admin','owner']);if(a.error)return a.error;try{const t=await tenant(env),rows=await supa(env,'invoices',{query:`select=id,task_id,invoice_number,contact_name,contact_email,currency,subtotal,tax,total,status,due_date,issued_at,paid_at,external_url,created_at,updated_at&tenant_id=eq.${t.id}&order=created_at.desc`});return json({invoices:rows})}catch{return error(500,'Could not load invoices.')}}
+async function sha256(value) {
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(value)));
+  return [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
 
-export async function onRequestPost({request,env}){const a=await requireSession(request,env,['admin','owner']);if(a.error)return a.error;try{const b=await request.json(),t=(await supa(env,'tasks',{query:`select=*&id=eq.${encodeURIComponent(b.taskId||'')}&deleted_at=is.null&limit=1`}))?.[0];if(!t)return error(404,'Task not found.');if(t.archived_at)return error(409,'Restore the archived task before creating an invoice.');if(t.status!=='delivered')return error(409,'Only a delivered task can be invoiced.');const existing=(await supa(env,'invoices',{query:`select=*&task_id=eq.${encodeURIComponent(t.id)}&provider=eq.xero&order=created_at.desc&limit=1`}))?.[0];if(existing)return json({invoice:existing,reused:true});const amount=Number(b.amount||0);if(!(amount>0))return error(400,'A positive invoice amount is required.');const contactName=String(b.contactName||'REALCAPTURE Client').trim(),contactEmail=String(b.contactEmail||'').trim();const line={Description:`Property media services · ${t.task_no} · ${t.property_name}`,Quantity:1,UnitAmount:amount,AccountCode:b.accountCode||'200',TaxType:b.taxType||'OUTPUT'},payload={Invoices:[{Type:'ACCREC',Contact:{Name:contactName,...(contactEmail?{EmailAddress:contactEmail}:{})},Date:new Date().toISOString().slice(0,10),DueDate:b.dueDate||new Date(Date.now()+7*86400000).toISOString().slice(0,10),LineAmountTypes:'Exclusive',Reference:t.task_no,Status:'DRAFT',LineItems:[line]}]};const d=await xeroRequest(env,'/Invoices',{method:'POST',body:JSON.stringify(payload)}),x=d.Invoices?.[0];if(!x)throw new Error('xero_invoice_missing');const tn=await tenant(env),rec={tenant_id:tn.id,task_id:t.id,provider:'xero',provider_invoice_id:x.InvoiceID,invoice_number:x.InvoiceNumber||null,contact_name:contactName,contact_email:contactEmail||null,currency:x.CurrencyCode||'AUD',subtotal:x.SubTotal??amount,tax:x.TotalTax??null,total:x.Total??amount,status:String(x.Status||'DRAFT').toLowerCase(),due_date:x.DueDateString||b.dueDate||null,issued_at:new Date().toISOString(),external_url:`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${x.InvoiceID}`,metadata:{reference:t.task_no}};await supa(env,'invoices',{method:'POST',query:'on_conflict=tenant_id,provider,provider_invoice_id',payload:rec,prefer:'resolution=merge-duplicates,return=minimal'});await logSync(env,'xero','outbound','invoice','invoice_created',{entity_id:x.InvoiceID,payload:{task_id:t.id,task_no:t.task_no,total:rec.total}});return json({invoice:rec,reused:false})}catch{return error(500,'Could not create Xero draft invoice.')}}
+function validDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function requestSnapshot(body) {
+  const amount = Number(body.amount || 0);
+  const contactName = String(body.contactName || 'REALCAPTURE Client').trim();
+  const contactEmail = String(body.contactEmail || '').trim().toLowerCase();
+  const accountCode = String(body.accountCode || '200').trim().toUpperCase();
+  const taxType = String(body.taxType || 'OUTPUT').trim().toUpperCase();
+  const dueDate = String(
+    body.dueDate || new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10)
+  ).trim();
+  return { amount, contactName, contactEmail, accountCode, taxType, dueDate };
+}
+
+function validateRequest(requestData) {
+  if (!Number.isFinite(requestData.amount) || requestData.amount <= 0 || requestData.amount > 100000000) {
+    return 'Enter a positive invoice amount below 100,000,000.';
+  }
+  if (!requestData.contactName || requestData.contactName.length > 255) {
+    return 'Enter a contact name under 256 characters.';
+  }
+  if (requestData.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(requestData.contactEmail)) {
+    return 'Enter a valid contact email address.';
+  }
+  if (!/^[A-Z0-9._-]{1,20}$/.test(requestData.accountCode)) {
+    return 'Choose a valid Xero account code.';
+  }
+  if (!/^[A-Z0-9._-]{1,40}$/.test(requestData.taxType)) {
+    return 'Choose a valid Xero tax type.';
+  }
+  if (!validDate(requestData.dueDate)) return 'Choose a valid invoice due date.';
+  return null;
+}
+
+function invoicePayload(task, requestData) {
+  return {
+    Invoices: [{
+      Type: 'ACCREC',
+      InvoiceNumber: task.task_no,
+      Contact: {
+        Name: requestData.contactName,
+        ...(requestData.contactEmail ? { EmailAddress: requestData.contactEmail } : {})
+      },
+      Date: new Date().toISOString().slice(0, 10),
+      DueDate: requestData.dueDate,
+      LineAmountTypes: 'Exclusive',
+      Reference: task.task_no,
+      Status: 'DRAFT',
+      LineItems: [{
+        Description: `Property media services · ${task.task_no} · ${task.property_name}`,
+        Quantity: 1,
+        UnitAmount: requestData.amount,
+        AccountCode: requestData.accountCode,
+        TaxType: requestData.taxType
+      }]
+    }]
+  };
+}
+
+function invoiceRecord(currentTenant, task, intent, remote, requestData, reconciled) {
+  return {
+    tenant_id: currentTenant.id,
+    task_id: task.id,
+    provider: 'xero',
+    provider_invoice_id: remote.InvoiceID,
+    invoice_number: remote.InvoiceNumber || task.task_no,
+    contact_name: requestData.contactName,
+    contact_email: requestData.contactEmail || null,
+    currency: remote.CurrencyCode || 'AUD',
+    subtotal: remote.SubTotal ?? requestData.amount,
+    tax: remote.TotalTax ?? null,
+    total: remote.Total ?? requestData.amount,
+    status: String(remote.Status || 'DRAFT').toLowerCase(),
+    due_date: remote.DueDateString || requestData.dueDate,
+    issued_at: remote.DateString || new Date().toISOString(),
+    external_url: `https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${encodeURIComponent(remote.InvoiceID)}`,
+    idempotency_key: intent.idempotency_key,
+    request_hash: intent.request_hash,
+    metadata: {
+      ...(intent.metadata || {}),
+      reference: task.task_no,
+      reconciled,
+      reconciled_at: new Date().toISOString()
+    }
+  };
+}
+
+export async function onRequestGet({ request, env }) {
+  const auth = await requireSession(request, env, ['admin', 'owner']);
+  if (auth.error) return auth.error;
+  try {
+    const currentTenant = await tenant(env);
+    const rows = await supa(env, 'invoices', {
+      query: `select=id,task_id,invoice_number,contact_name,contact_email,currency,subtotal,tax,total,status,due_date,issued_at,paid_at,external_url,created_at,updated_at&tenant_id=eq.${currentTenant.id}&order=created_at.desc`
+    });
+    return json({ invoices: rows });
+  } catch {
+    return error(500, 'Could not load invoices.');
+  }
+}
+
+export async function onRequestPost({ request, env }) {
+  const auth = await requireSession(request, env, ['admin', 'owner']);
+  if (auth.error) return auth.error;
+
+  let task = null;
+  try {
+    const body = await request.json();
+    const currentTenant = await tenant(env);
+    task = (await supa(env, 'tasks', {
+      query: `select=*&id=eq.${encodeURIComponent(body.taskId || '')}&tenant_id=eq.${currentTenant.id}&deleted_at=is.null&limit=1`
+    }))?.[0];
+    if (!task) return error(404, 'Task not found.');
+    if (task.archived_at) return error(409, 'Restore the archived task before creating an invoice.');
+    if (task.status !== 'delivered') return error(409, 'Only a delivered task can be invoiced.');
+
+    const requestData = requestSnapshot(body);
+    const validationError = validateRequest(requestData);
+    if (validationError) return error(400, validationError);
+    const requestHash = await sha256(JSON.stringify(requestData));
+
+    let intentRaw;
+    try {
+      intentRaw = await supa(env, 'rpc/northlight_begin_xero_invoice', {
+        method: 'POST',
+        payload: {
+          p_task_id: task.id,
+          p_actor: auth.session.userId,
+          p_idempotency_key: proposedIdempotencyKey(),
+          p_request_hash: requestHash,
+          p_request: requestData
+        }
+      });
+    } catch (exception) {
+      const message = String(exception?.message || '');
+      if (/task_not_found/i.test(message)) return error(404, 'Task not found.');
+      if (/task_archived/i.test(message)) return error(409, 'Restore the archived task before creating an invoice.');
+      if (/task_not_delivered/i.test(message)) return error(409, 'Only a delivered task can be invoiced.');
+      if (/invoice_parameters_changed/i.test(message)) {
+        return error(409, 'A Xero invoice already exists for this task with different billing details. Open that invoice instead.');
+      }
+      if (/permission_denied/i.test(message)) return error(403, 'You do not have permission to create this invoice.');
+      if (/invalid_/i.test(message)) return error(400, 'The invoice details are invalid.');
+      throw exception;
+    }
+    const intent = Array.isArray(intentRaw) ? intentRaw[0] : intentRaw;
+    if (!intent?.id) throw new Error('xero_intent_missing');
+
+    const payload = invoicePayload(task, requestData);
+    const result = await ensureXeroInvoice({
+      intent,
+      taskNumber: task.task_no,
+      findRemote: invoiceNumber => findXeroInvoiceByNumber(env, invoiceNumber),
+      createRemote: async idempotencyKey => {
+        const response = await xeroRequest(env, '/api.xro/2.0/Invoices', {
+          method: 'POST',
+          headers: { 'Idempotency-Key': idempotencyKey },
+          body: JSON.stringify(payload)
+        });
+        return response?.Invoices?.[0] || null;
+      },
+      persistRemote: async (remote, { reconciled }) => {
+        const record = invoiceRecord(currentTenant, task, intent, remote, requestData, reconciled);
+        const rows = await supa(env, 'invoices', {
+          method: 'PATCH',
+          query: `id=eq.${encodeURIComponent(intent.id)}&tenant_id=eq.${currentTenant.id}&provider=eq.xero`,
+          payload: record
+        });
+        const saved = rows?.[0] || (await supa(env, 'invoices', {
+          query: `select=*&id=eq.${encodeURIComponent(intent.id)}&tenant_id=eq.${currentTenant.id}&limit=1`
+        }))?.[0];
+        if (!saved?.provider_invoice_id) throw new Error('xero_invoice_persist_failed');
+        return saved;
+      }
+    });
+
+    await logSync(
+      env,
+      'xero',
+      'outbound',
+      'invoice',
+      result.reconciled ? 'invoice_reconciled' : 'invoice_created',
+      {
+        entity_id: result.invoice.provider_invoice_id,
+        payload: { task_id: task.id, task_no: task.task_no, total: result.invoice.total }
+      }
+    );
+    return json(result, result.reused ? 200 : 201);
+  } catch (exception) {
+    try {
+      await logSync(env, 'xero', 'outbound', 'invoice', 'invoice_create_failed', {
+        status: 'failed',
+        error: String(exception?.message || 'unknown_error'),
+        payload: task ? { task_id: task.id, task_no: task.task_no } : {}
+      });
+    } catch {}
+    const message = String(exception?.message || '');
+    if (/xero_(?:401|403|429|5\d\d)|oauth_|not_connected|tenant_missing/i.test(message)) {
+      return error(503, 'Xero is temporarily unavailable. The protected invoice intent is saved; retry safely from this task.');
+    }
+    return error(502, 'Xero could not confirm the draft invoice. The protected invoice intent is saved; retry safely from this task.');
+  }
+}

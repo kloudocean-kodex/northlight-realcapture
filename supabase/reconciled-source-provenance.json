@@ -1,0 +1,27 @@
+{
+  "format": "northlight-db-reconciled-source-provenance-v1",
+  "capturedAt": "2026-08-22",
+  "remediationBaseCommit": "31587ba1b0650804aa3ed7b4d6de182ceb1b52e4",
+  "materializationCommit": "0ee449c47cc019d309642380a9002a278bc93c54",
+  "classification": "sanitized_reconstructed_current_state_not_historical_sql",
+  "historicalCredentialMaterialPersisted": false,
+  "v9Evidence": {
+    "sourceCheckpoint": "5f26a32c15bc7394ed2c7aee22b0c42ea3b180f5",
+    "verificationRevision": "postgres17-auth-regex-and-prior-fixes-v9",
+    "replayManifestSha256": "04b5c7f329d5541b41c49c718cb14d13220d80beca673c28d254f045af238307",
+    "replaySqlSha256": "195130aa9f3ace0091eba3f7ff45a3546689c559abbb250514f2e45d95fdd35d"
+  },
+  "expectedCleanRoom": {
+    "postgresMajor": 17,
+    "catalogFingerprintSha256": "b203bbb6b880157a64cdb93598b8820fae16d67bddb2265abb5c18b54a080982",
+    "catalogRelationCount": 34,
+    "databaseConcurrencyContracts": 9,
+    "credentialConcurrencyContracts": 2
+  },
+  "scope": {
+    "sourceHashManifest": "supabase/reconciled-source.sha256",
+    "sourceFileCount": 51,
+    "databaseRaceHarness": "ci/northlight-db-concurrency.sh",
+    "credentialRaceHarness": "ci/northlight-auth-migration-concurrency.sh"
+  }
+}

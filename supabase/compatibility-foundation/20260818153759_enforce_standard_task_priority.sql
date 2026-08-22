@@ -1,0 +1,1 @@
+update public.tasks set priority='standard' where priority is distinct from 'standard'; alter table public.tasks drop constraint if exists tasks_priority_check; alter table public.tasks add constraint tasks_priority_check check (priority='standard');

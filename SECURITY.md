@@ -9,6 +9,7 @@
 - Sessions use signed Secure/HttpOnly cookies.
 - Role/resource authorization is enforced server-side.
 - Dropbox client media access is role checked and temporary.
+- Agent delivery media is pinned to an immutable approved manifest; every temporary link rechecks Dropbox ID, revision, hash, size and path.
 
 ## Never do
 
