@@ -1,0 +1,101 @@
+name: Northlight DB Source Materialize
+
+on:
+  push:
+    branches:
+      - northlight-db-provenance-audit-20260822
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    name: Materialize sanitized verified DB source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout forensic audit branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Hard-fence target branch and immutable base
+        run: |
+          set -euo pipefail
+          target='northlight-db-source-reconciliation-20260822'
+          expected='31587ba1b0650804aa3ed7b4d6de182ceb1b52e4'
+          git fetch origin "+refs/heads/${target}:refs/remotes/origin/${target}"
+          actual="$(git rev-parse "refs/remotes/origin/${target}")"
+          echo "target_branch=${target}"
+          echo "expected_base=${expected}"
+          echo "actual_target_head=${actual}"
+          test "$actual" = "$expected"
+          test "$target" != 'northlight-production'
+
+      - name: Fetch and verify immutable v9 replay evidence
+        run: |
+          set -euo pipefail
+          curl --location --fail --silent --show-error --max-time 60 \
+            'https://drive.usercontent.google.com/download?id=1WYWe6GaUKa_faeD-eT5jbcsSm96PXaBK&export=download&confirm=t' \
+            -o /tmp/v9-replay.sql
+          curl --location --fail --silent --show-error --max-time 30 \
+            'https://drive.usercontent.google.com/download?id=12Zj81L4bZHEmHPxJcOL7989FL95hPSH3&export=download&confirm=t' \
+            -o /tmp/v9-manifest.json
+          test "$(wc -c </tmp/v9-replay.sql)" -eq 390492
+          test "$(wc -c </tmp/v9-manifest.json)" -eq 11374
+          echo '195130aa9f3ace0091eba3f7ff45a3546689c559abbb250514f2e45d95fdd35d  /tmp/v9-replay.sql' | sha256sum --check --strict
+          echo '04b5c7f329d5541b41c49c718cb14d13220d80beca673c28d254f045af238307  /tmp/v9-manifest.json' | sha256sum --check --strict
+
+      - name: Reconstruct and sanitize candidate
+        run: node .github/scripts/northlight-reconcile-v9.mjs
+
+      - name: Verify reconstructed candidate before write
+        run: |
+          set -euo pipefail
+          test "$(find /tmp/reconciled -type f | wc -l)" -eq 51
+          ! grep -R -E 'cfut_[A-Za-z0-9_-]{20,}' /tmp/reconciled
+          ! grep -R -E 'sb_(secret|publishable)_[A-Za-z0-9_-]{20,}' /tmp/reconciled
+          ! grep -R -E 'eyJ[A-Za-z0-9_-]{40,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}' /tmp/reconciled
+          ! grep -R -E 'AKIA[0-9A-Z]{16}' /tmp/reconciled
+          ! grep -R -E 'gh[pousr]_[A-Za-z0-9]{30,}' /tmp/reconciled
+          node <<'NODE'
+          const fs=require('fs'),crypto=require('crypto'),path=require('path');
+          const rows=JSON.parse(fs.readFileSync('/tmp/reconciled-source-hashes.json','utf8'));
+          if(rows.length!==51) throw new Error('unexpected reconciled hash row count');
+          for(const row of rows){
+            const p=path.join('/tmp/reconciled',row.path);
+            const data=fs.readFileSync(p);
+            const h=crypto.createHash('sha256').update(data).digest('hex');
+            if(h!==row.sha256 || data.length!==row.bytes) throw new Error('reconstructed hash/size mismatch: '+row.path);
+          }
+          console.log('candidate_hash_verification=51/51');
+          NODE
+
+      - name: Copy only allowlisted source paths onto fenced target
+        run: |
+          set -euo pipefail
+          target='northlight-db-source-reconciliation-20260822'
+          expected='31587ba1b0650804aa3ed7b4d6de182ceb1b52e4'
+          git switch --detach "$expected"
+          while IFS= read -r -d '' src; do
+            rel="${src#/tmp/reconciled/}"
+            case "$rel" in
+              supabase/compatibility-foundation/*|supabase/migrations/*|supabase/tests/*) ;;
+              *) echo "::error::Non-allowlisted recovered path: $rel"; exit 1;;
+            esac
+            mkdir -p "$(dirname "$rel")"
+            cp "$src" "$rel"
+            git add -- "$rel"
+          done < <(find /tmp/reconciled -type f -print0 | sort -z)
+          test -n "$(git diff --cached --name-only)"
+          bad="$(git diff --cached --name-only | grep -Ev '^(supabase/compatibility-foundation/|supabase/migrations/|supabase/tests/)' || true)"
+          test -z "$bad"
+          changed="$(git diff --cached --name-only | wc -l)"
+          echo "staged_changed_file_count=$changed"
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'db: materialize verified sanitized PostgreSQL 17 source'
+          new_head="$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD^)" = "$expected"
+          git push origin "HEAD:refs/heads/${target}"
+          echo "materialized_target_head=$new_head"
