@@ -37,77 +37,80 @@ jobs:
           test "$(wc -c </tmp/replay-manifest.json)" -eq 11374
           echo '04b5c7f329d5541b41c49c718cb14d13220d80beca673c28d254f045af238307  /tmp/replay-manifest.json' | sha256sum --check --strict
 
-      - name: Compare hashes without printing source bodies
+      - name: Compare remediation hashes without printing source bodies
         run: |
           set -euo pipefail
           node <<'NODE'
           const fs = require('fs');
           const crypto = require('crypto');
           const path = require('path');
-
           const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
           const manifest = JSON.parse(fs.readFileSync('/tmp/replay-manifest.json','utf8'));
           const contract = JSON.parse(fs.readFileSync('supabase/schema-contract.json','utf8'));
-
-          const replay = new Map(
-            manifest.files
-              .filter(f => f.path.startsWith('supabase/migrations/'))
-              .map(f => [path.basename(f.path), f.sha256])
-          );
+          const replay = new Map(manifest.files.filter(f => f.path.startsWith('supabase/migrations/')).map(f => [path.basename(f.path), f.sha256]));
           const contractMap = new Map(Object.entries(contract.localCandidateMigrationSha256 || {}));
           const actualNames = fs.readdirSync('supabase/migrations').filter(n => n.endsWith('.sql')).sort();
           const actual = new Map(actualNames.map(n => [n, sha(path.join('supabase/migrations', n))]));
-
           const names = [...new Set([...replay.keys(), ...contractMap.keys(), ...actual.keys()])].sort();
-          const rows = names.map(name => ({
-            name,
-            actual: actual.get(name) || null,
-            contract: contractMap.get(name) || null,
-            verifiedReplay: replay.get(name) || null,
-            actualVsContract: actual.has(name) && contractMap.has(name) ? actual.get(name) === contractMap.get(name) : null,
-            actualVsReplay: actual.has(name) && replay.has(name) ? actual.get(name) === replay.get(name) : null,
-          }));
-          const discrepancies = rows.filter(r =>
-            r.actual !== r.contract || r.actual !== r.verifiedReplay || r.contract !== r.verifiedReplay
-          );
-
+          const rows = names.map(name => ({name,actual:actual.get(name)||null,contract:contractMap.get(name)||null,verifiedReplay:replay.get(name)||null,actualVsContract:actual.has(name)&&contractMap.has(name)?actual.get(name)===contractMap.get(name):null,actualVsReplay:actual.has(name)&&replay.has(name)?actual.get(name)===replay.get(name):null}));
+          const discrepancies = rows.filter(r => r.actual!==r.contract || r.actual!==r.verifiedReplay || r.contract!==r.verifiedReplay);
           console.log(`actual_migrations=${actual.size}`);
           console.log(`contract_migrations=${contractMap.size}`);
           console.log(`verified_replay_migrations=${replay.size}`);
           console.log(`migration_discrepancy_count=${discrepancies.length}`);
           for (const r of discrepancies) console.log(`MIGRATION ${JSON.stringify(r)}`);
-
-          const surface = manifest.files.map(f => {
-            const exists = fs.existsSync(f.path) && fs.statSync(f.path).isFile();
-            const actualHash = exists ? sha(f.path) : null;
-            return {path:f.path, existsInRemediation:exists, actual:actualHash, verifiedReplay:f.sha256, matches: exists ? actualHash===f.sha256 : null};
-          });
-          const surfaceDiff = surface.filter(r => r.matches !== true);
-          const missing = surfaceDiff.filter(r => !r.existsInRemediation);
-          const mismatched = surfaceDiff.filter(r => r.existsInRemediation);
+          const surface = manifest.files.map(f => { const exists=fs.existsSync(f.path)&&fs.statSync(f.path).isFile(); const actualHash=exists?sha(f.path):null; return {path:f.path,existsInRemediation:exists,actual:actualHash,verifiedReplay:f.sha256,matches:exists?actualHash===f.sha256:null}; });
+          const surfaceDiff=surface.filter(r=>r.matches!==true);
           console.log(`verified_replay_input_count=${surface.length}`);
-          console.log(`replay_inputs_missing_from_remediation=${missing.length}`);
-          console.log(`replay_inputs_present_but_hash_mismatched=${mismatched.length}`);
+          console.log(`replay_inputs_missing_from_remediation=${surfaceDiff.filter(r=>!r.existsInRemediation).length}`);
+          console.log(`replay_inputs_present_but_hash_mismatched=${surfaceDiff.filter(r=>r.existsInRemediation).length}`);
           for (const r of surfaceDiff) console.log(`REPLAY_INPUT ${JSON.stringify(r)}`);
-
-          const patches = manifest.verificationPatches || [];
+          const patches=manifest.verificationPatches||[];
           console.log(`verification_patch_count=${patches.length}`);
-          for (const p of patches) {
-            console.log(`PATCH ${JSON.stringify({sourcePath:p.sourcePath, reason:p.reason, productionApplied:p.productionApplied})}`);
-          }
+          for (const p of patches) console.log(`PATCH ${JSON.stringify({sourcePath:p.sourcePath,reason:p.reason,productionApplied:p.productionApplied})}`);
+          NODE
 
-          fs.writeFileSync('/tmp/db-provenance-audit.json', JSON.stringify({
-            auditFormat: 'northlight-db-provenance-audit-v2',
-            sourceCheckpoint: manifest.sourceCheckpoint,
-            verificationRevision: manifest.verificationRevision,
-            migrationDiscrepancies: discrepancies,
-            replaySurfaceDifferences: surfaceDiff,
-            verificationPatches: patches.map(p => ({sourcePath:p.sourcePath, reason:p.reason, productionApplied:p.productionApplied}))
-          }, null, 2));
+      - name: Recover and fingerprint retained PR41 replay bundle
+        run: |
+          set -euo pipefail
+          git show origin/northlight-combined-verify-20260821:ci/northlight-db-replay-bundle.tar.gz > /tmp/replay-bundle.tar.gz
+          test -s /tmp/replay-bundle.tar.gz
+          mkdir -p /tmp/replay-bundle
+          tar -xzf /tmp/replay-bundle.tar.gz -C /tmp/replay-bundle
+          echo "bundle_sha256=$(sha256sum /tmp/replay-bundle.tar.gz | awk '{print $1}')"
+          echo "bundle_file_count=$(find /tmp/replay-bundle -type f | wc -l)"
+          node <<'NODE'
+          const fs=require('fs'), path=require('path'), crypto=require('crypto');
+          const root='/tmp/replay-bundle';
+          const manifest=JSON.parse(fs.readFileSync('/tmp/replay-manifest.json','utf8'));
+          const sha=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+          function walk(dir){return fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(dir,e.name)):[path.join(dir,e.name)]);}
+          const files=walk(root).sort();
+          const byRel=new Map(files.map(p=>[path.relative(root,p).replaceAll('\\','/'),p]));
+          console.log('BUNDLE_PATHS_BEGIN');
+          for(const [rel,p] of [...byRel].sort()) console.log(JSON.stringify({path:rel,size:fs.statSync(p).size,sha256:sha(p)}));
+          console.log('BUNDLE_PATHS_END');
+          const matches=[];
+          const missing=[];
+          for(const f of manifest.files){
+            let p=byRel.get(f.path);
+            if(!p){
+              const candidates=files.filter(x=>path.basename(x)===path.basename(f.path));
+              if(candidates.length===1) p=candidates[0];
+            }
+            if(!p){missing.push(f.path);continue;}
+            matches.push({manifestPath:f.path,bundlePath:path.relative(root,p).replaceAll('\\','/'),bundleSha:sha(p),expectedSha:f.sha256,matches:sha(p)===f.sha256});
+          }
+          console.log(`bundle_manifest_resolved=${matches.length}`);
+          console.log(`bundle_manifest_missing=${missing.length}`);
+          console.log(`bundle_manifest_hash_mismatches=${matches.filter(x=>!x.matches).length}`);
+          for(const x of matches.filter(x=>!x.matches)) console.log(`BUNDLE_MISMATCH ${JSON.stringify(x)}`);
+          for(const x of missing) console.log(`BUNDLE_MISSING ${x}`);
+          fs.writeFileSync('/tmp/replay-bundle-map.json',JSON.stringify({matches,missing},null,2));
           NODE
 
       - name: Assert no source bodies or secret values were emitted
         run: |
           set -euo pipefail
-          test -s /tmp/db-provenance-audit.json
-          echo 'Provenance comparison completed using paths and cryptographic hashes only.'
+          test -s /tmp/replay-bundle-map.json
+          echo 'Provenance recovery completed using paths, sizes and cryptographic hashes only.'
