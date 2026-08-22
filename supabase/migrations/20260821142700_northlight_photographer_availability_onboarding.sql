@@ -80,7 +80,7 @@ begin
   if pg_catalog.jsonb_typeof(new.working_hours) is distinct from 'object'
      or pg_catalog.jsonb_typeof(new.days_off) is distinct from 'array'
      or pg_catalog.jsonb_typeof(new.special_days) is distinct from 'array'
-     or pg_catalog.jsonb_object_length(new.working_hours) > 7
+     or (select pg_catalog.count(*) from pg_catalog.jsonb_object_keys(new.working_hours)) > 7
      or pg_catalog.jsonb_array_length(new.days_off) > 366
      or pg_catalog.jsonb_array_length(new.special_days) > 366 then
     raise exception 'availability_shape_invalid';
@@ -370,7 +370,7 @@ begin
   if found then
     v_profile_ready := pg_catalog.cardinality(v_profile.areas) > 0
       and pg_catalog.cardinality(v_profile.service_codes) > 0
-      and pg_catalog.jsonb_object_length(v_profile.working_hours) > 0
+      and exists (select 1 from pg_catalog.jsonb_object_keys(v_profile.working_hours))
       and v_profile.timezone is not null;
   end if;
 

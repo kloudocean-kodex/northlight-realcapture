@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+\set ON_ERROR_STOP on
 
 -- Run after the complete migration chain on an isolated Supabase PostgreSQL 17
 -- database. This script is read-only and raises on the first failed contract.
@@ -109,6 +110,10 @@ begin
        where policy.schemaname = 'public'
          and policy.tablename = table_name
          and policy.roles && array['anon', 'authenticated']::name[]
+         and (
+           policy.permissive <> 'RESTRICTIVE'
+           or policy.policyname <> 'northlight_single_tenant_only'
+         )
      );
   if unexpected is not null then
     raise exception 'database_contract: organization foundation exposed before org authorization: %', unexpected;
@@ -632,6 +637,28 @@ begin
       );
   if violations <> 0 then
     raise exception 'database_contract: invalid saved Photographer availability rows: %', violations;
+  end if;
+end
+$$;
+
+-- The Photographer availability functions must use PostgreSQL-17-supported
+-- JSONB object-key semantics. jsonb_object_length(jsonb) does not exist.
+do $$
+declare
+  validator_def text;
+  bookability_def text;
+begin
+  validator_def := pg_catalog.pg_get_functiondef(
+    'public.northlight_validate_provider_availability_row()'::pg_catalog.regprocedure
+  );
+  bookability_def := pg_catalog.pg_get_functiondef(
+    'northlight_private.photographer_bookability(uuid,uuid)'::pg_catalog.regprocedure
+  );
+  if validator_def ilike '%jsonb_object_length%'
+     or bookability_def ilike '%jsonb_object_length%'
+     or validator_def not ilike '%jsonb_object_keys%'
+     or bookability_def not ilike '%jsonb_object_keys%' then
+    raise exception 'database_contract: Photographer availability JSONB object-key implementation is not PostgreSQL-17 compatible';
   end if;
 end
 $$;

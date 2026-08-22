@@ -1,0 +1,1 @@
+update public.roles set permissions='["editing_queue","upload_edit","revision","view_raw","view_edited","view_final"]'::jsonb where code='editor';

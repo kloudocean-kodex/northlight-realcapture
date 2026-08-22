@@ -17,11 +17,19 @@ alter table public.tasks
     tenant_id with =,
     photographer_user_id with =,
     tstzrange(
-      scheduled_start - make_interval(
-        mins => public.northlight_schedule_buffer_minutes(metadata, 'buffer_before_min')
+      pg_catalog.timezone(
+        'UTC',
+        pg_catalog.timezone('UTC', scheduled_start)
+          - pg_catalog.make_interval(
+            mins => public.northlight_schedule_buffer_minutes(metadata, 'buffer_before_min')
+          )
       ),
-      scheduled_end + make_interval(
-        mins => public.northlight_schedule_buffer_minutes(metadata, 'buffer_after_min')
+      pg_catalog.timezone(
+        'UTC',
+        pg_catalog.timezone('UTC', scheduled_end)
+          + pg_catalog.make_interval(
+            mins => public.northlight_schedule_buffer_minutes(metadata, 'buffer_after_min')
+          )
       ),
       '[)'
     ) with &&

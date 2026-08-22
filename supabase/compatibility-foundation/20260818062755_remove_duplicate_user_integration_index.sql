@@ -1,0 +1,1 @@
+drop index if exists public.user_integrations_user_idx;

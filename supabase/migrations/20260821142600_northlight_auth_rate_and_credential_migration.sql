@@ -8,6 +8,11 @@ set statement_timeout = '5min';
 alter table public.auth_login_attempts enable row level security;
 revoke all on table public.auth_login_attempts
   from public, anon, authenticated, service_role;
+-- The bootstrap-era client policy is obsolete once login throttling becomes a
+-- server-only SECURITY DEFINER surface.  Removing it keeps the table closed
+-- even if a future privilege grant is accidentally broadened.
+drop policy if exists northlight_pilot_backend on public.auth_login_attempts;
+drop policy if exists northlight_single_tenant_only on public.auth_login_attempts;
 grant all on table public.auth_login_attempts to service_role;
 
 do $$
@@ -232,8 +237,10 @@ begin
   if pg_catalog.array_length(v_parts, 1) <> 4
      or v_parts[1] <> 'pbkdf2'
      or v_iterations not between 210000 and 1000000
-     or v_parts[3] !~ '^[A-Za-z0-9_-]{22,128}$'
-     or v_parts[4] !~ '^[A-Za-z0-9_-]{43,256}$' then
+     or pg_catalog.length(v_parts[3]) not between 22 and 128
+     or v_parts[3] !~ '^[A-Za-z0-9_-]+$'
+     or pg_catalog.length(v_parts[4]) not between 43 and 256
+     or v_parts[4] !~ '^[A-Za-z0-9_-]+$' then
     raise exception 'invalid_credential_migration';
   end if;
 
