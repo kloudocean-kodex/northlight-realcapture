@@ -1,4 +1,4 @@
-import{supa,tenant,accessToken,gmailCreateDraft,gmailGetDraft,gmailSendDraft,logEvent,logSync}from'./core.js';
+import{supa,tenant,accessToken,gmailCreateDraft,gmailGetDraft,gmailSendDraft,logEvent,logSync,emailHtml}from'./core.js';
 import{userGoogleRequest,userIntegration}from'./user-integrations.js';
 import{deliverDurableDraft}from'./durable-email.js';
 import{calendarEventHasDeleteSensitiveChanges,calendarEventOwnedByTask,calendarMetadataForEvent,managedCalendarChangedFields,managedCalendarEventNeedsReview,managedCalendarSnapshot,managedCalendarSnapshotsEqual,reconcileManagedCalendarEvent}from'./calendar-sync.js';
@@ -26,6 +26,22 @@ export async function queueTaskHandoffs(env,t){const tn=await tenant(env),now=ne
 async function dropboxApi(token,endpoint,payload={}){const r=await fetch(`https://api.dropboxapi.com/2/${endpoint}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(payload)}),txt=await r.text();if(!r.ok)throw new Error(`dropbox_${r.status}`);try{return txt?JSON.parse(txt):{}}catch{return{}}}
 function calendarEventId(t){const generation=new Date(t.metadata?.last_schedule_change_at||t.scheduled_start||0).getTime(),suffix=Number.isFinite(generation)&&generation>0?generation.toString(16):'0';return`nl${String(t.id).replace(/-/g,'').toLowerCase()}${suffix}`}
 function eventBody(t,timezone){return{summary:`${t.task_no} · ${t.property_name}`,description:`Northlight property media task ${t.task_no}\nServices: ${(t.service_codes||[]).join(', ')}`,location:[t.address,t.suburb].filter(Boolean).join(', '),start:{dateTime:new Date(t.scheduled_start).toISOString(),timeZone:timezone},end:{dateTime:new Date(t.scheduled_end||new Date(t.scheduled_start).getTime()+90*60000).toISOString(),timeZone:timezone},extendedProperties:{private:{northlightTaskId:t.id,northlightTaskNo:t.task_no}}}}
+function serviceLabel(code){return String(code||'').replace(/[_-]+/g,' ').replace(/\b\w/g,x=>x.toUpperCase())}
+export function assignmentEmailContent(env,t){
+  const when=new Date(t.scheduled_start).toLocaleString('en-AU',{timeZone:TZ,weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+  const services=(t.service_codes||[]).map(serviceLabel).join(', ')||'Property media';
+  const address=[t.address,t.suburb].filter(Boolean).join(', ');
+  const text=`Northlight · REALCAPTURE\n\nNew property media booking\n\n${t.property_name}\n${address}\n\nWhen: ${when}\nServices: ${services}\nTask: ${t.task_no}\n\nWhat happens next\n- Confirm the booking if the time works.\n- Decline only if you cannot attend; Northlight will keep the team informed.\n- Use the task conversation for access notes, issues and media hand-off.\n\nOpen Northlight to view the full brief.`;
+  const html=emailHtml({
+    title:'New property media booking',
+    intro:`${t.property_name} is ready for review. Confirm the booking when the time works for you.`,
+    rows:[['Property',t.property_name],['Address',address],['When',when],['Services',services],['Task',t.task_no]],
+    body:'What happens next\nConfirm the booking if the time works. If you cannot attend, decline from Northlight so the team can reassign cleanly.\n\nUse the task conversation for access notes, issues and media hand-off.',
+    ctaHref:env.PUBLIC_ORIGIN||'https://northlight-realcapture.pages.dev/',
+    ctaLabel:'Open booking'
+  });
+  return{text,html};
+}
 function googleStatus(error,status){return error?.status===status||String(error?.message||'').includes(`google_${status}:`)}
 function calendarEventPath(calendarId,eventId){return`/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`}
 function savedCalendarEtag(t,eventId){return t.metadata?.calendar_etag_event_id===eventId?t.metadata?.calendar_etag||null:null}
@@ -134,13 +150,13 @@ async function ensureEmail(env,t,row){
   if(!to)return{status:'attention',reason:'notification_recipient_missing'};
   cur=await task(env,t.id);
   if(!sameAssignment(cur,t))return{status:'cancelled',reason:'assignment_changed_before_email'};
-  const subject=`${t.task_no} · New property media booking`,text=`Northlight · REALCAPTURE\n\nNew property media task\n\nProperty: ${t.property_name}\nAddress: ${t.address}, ${t.suburb}\nWhen: ${new Date(t.scheduled_start).toLocaleString('en-AU',{timeZone:TZ})}\nServices: ${(t.service_codes||[]).join(', ')}\nTask: ${t.task_no}\n\nOpen Northlight to view, confirm or raise an issue.`,deliveryKey=`assignment-${String(t.id).replace(/-/g,'')}-${String(t.photographer_user_id).replace(/-/g,'')}-${new Date(t.scheduled_start).getTime()}`,messageId=`<${deliveryKey}@northlight-realcapture.pages.dev>`;
+  const subject=`${t.task_no} · New property media booking`,email=assignmentEmailContent(env,t),deliveryKey=`assignment-${String(t.id).replace(/-/g,'')}-${String(t.photographer_user_id).replace(/-/g,'')}-${new Date(t.scheduled_start).getTime()}`,messageId=`<${deliveryKey}@northlight-realcapture.pages.dev>`;
   let claim=row;
   const delivery=await deliverDurableDraft({
     state:claim.payload||{},
     deliveryKey,
     messageId,
-    createDraft:()=>gmailCreateDraft(env,to,subject,text,{messageId}),
+    createDraft:()=>gmailCreateDraft(env,to,subject,email.text,{messageId,html:email.html}),
     getDraft:draftId=>gmailGetDraft(env,draftId),
     sendDraft:draftId=>gmailSendDraft(env,draftId),
     persist:async next=>{const saved=await patchHandoff(env,claim,{payload:next},{status:'processing',attempts:claim.attempts});if(!saved)throw new Error('email_delivery_checkpoint_not_persisted');claim=saved;return saved.payload||next},
