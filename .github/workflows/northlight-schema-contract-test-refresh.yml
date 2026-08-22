@@ -1,0 +1,111 @@
+name: Northlight Schema Contract Test Refresh
+
+on:
+  push:
+    branches:
+      - northlight-db-provenance-audit-20260822
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Hard-fence authoritative remediation head
+        run: |
+          set -euo pipefail
+          target='remediation/ultimate-production-20260819'
+          expected='8d430f43f2c9d7983a98e7285515ecc8c7171c10'
+          git fetch origin "+refs/heads/${target}:refs/remotes/origin/${target}"
+          test "$(git rev-parse refs/remotes/origin/${target})" = "$expected"
+          test "$target" != 'northlight-production'
+
+      - name: Refresh only the stale schema-contract test
+        run: |
+          set -euo pipefail
+          target='remediation/ultimate-production-20260819'
+          expected='8d430f43f2c9d7983a98e7285515ecc8c7171c10'
+          git switch --detach "$expected"
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'tests/database-contract.test.mjs';
+          let s = fs.readFileSync(path, 'utf8');
+          const oldBlock = `test('schema manifest is explicit about the unrecovered production foundation', async () => {
+  const contract = JSON.parse(await read('supabase/schema-contract.json'));
+  const local = await migrationNames();
+
+  assert.equal(contract.formatVersion, 1);
+  assert.equal(contract.target.postgresMajor, 17);
+  assert.equal(contract.target.productionInspectionWasReadOnly, true);
+  assert.equal(contract.reproducibility.fromEmptyDatabase, false);
+  assert.equal(contract.reproducibility.releaseBlocking, true);
+  assert.equal(contract.productionLedger.length, 36);
+  assert.equal(contract.productionLedger[0].version, '20260816153506');
+  assert.equal(contract.productionLedger.at(-1).version, '20260819110844');
+  assert.ok(contract.productionLedger.every(row => row.localExactSql === false));
+  assert.deepEqual(contract.localCandidateMigrations, local);
+  assert.deepEqual(Object.keys(contract.localCandidateMigrationSha256), local);
+  for (const name of local) {
+    const digest = createHash('sha256').update(await named(name)).digest('hex');
+    assert.equal(contract.localCandidateMigrationSha256[name], digest, \`stale migration hash: \${name}\`);
+  }
+  assert.ok(contract.requiredEvidence.includes('empty_postgres_17_replay'));
+  assert.ok(contract.requiredEvidence.includes('backup_restore_rehearsal'));
+});`;
+          const newBlock = `test('schema manifest records verified clean-room reproducibility and remaining live-upgrade blockers', async () => {
+  const contract = JSON.parse(await read('supabase/schema-contract.json'));
+  const local = await migrationNames();
+
+  assert.equal(contract.formatVersion, 2);
+  assert.equal(contract.target.postgresMajor, 17);
+  assert.equal(contract.target.productionInspectionWasReadOnly, true);
+  assert.equal(contract.reproducibility.fromEmptyDatabase, true);
+  assert.equal(contract.reproducibility.releaseBlocking, true);
+  assert.equal(contract.reproducibility.cleanRoomEvidence.status, 'passed');
+  assert.equal(contract.reproducibility.cleanRoomEvidence.checkedInSourceHashCount, 51);
+  assert.equal(contract.reproducibility.cleanRoomEvidence.credentialShapeFindings, 0);
+  assert.equal(contract.reproducibility.cleanRoomEvidence.catalogRelationCount, 34);
+  assert.equal(contract.reproducibility.cleanRoomEvidence.catalogFingerprintSha256, 'b203bbb6b880157a64cdb93598b8820fae16d67bddb2265abb5c18b54a080982');
+  assert.deepEqual(contract.reproducibility.cleanRoomEvidence.backupRestoreRelationCounts, { source: 34, restored: 34 });
+  assert.deepEqual(contract.reproducibility.cleanRoomEvidence.databaseConcurrencyContracts, { passed: 9, total: 9 });
+  assert.deepEqual(contract.reproducibility.cleanRoomEvidence.credentialConcurrencyContracts, { passed: 2, total: 2 });
+  assert.equal(contract.productionLedger.length, 36);
+  assert.equal(contract.productionLedger[0].version, '20260816153506');
+  assert.equal(contract.productionLedger.at(-1).version, '20260819110844');
+  assert.ok(contract.productionLedger.every(row => row.localExactSql === false));
+  assert.deepEqual(contract.localCandidateMigrations, local);
+  assert.deepEqual(Object.keys(contract.localCandidateMigrationSha256), local);
+  for (const name of local) {
+    const digest = createHash('sha256').update(await named(name)).digest('hex');
+    assert.equal(contract.localCandidateMigrationSha256[name], digest, \`stale migration hash: \${name}\`);
+  }
+  for (const key of [
+    'empty_postgres_17_replay',
+    'database_contract_sql_pass',
+    'negative_rls_and_rpc_tests',
+    'concurrency_race_tests',
+    'normalized_schema_fingerprint_match',
+    'backup_restore_rehearsal'
+  ]) assert.equal(contract.evidenceStatus[key], 'passed', \`expected passed evidence: \${key}\`);
+  assert.equal(contract.evidenceStatus.live_production_to_candidate_upgrade_rehearsal, 'pending');
+  assert.equal(contract.evidenceStatus.security_and_performance_advisors_after_staging_rc, 'pending');
+  assert.ok(contract.requiredEvidence.includes('live_production_to_candidate_upgrade_rehearsal'));
+  assert.ok(contract.requiredEvidence.includes('security_and_performance_advisors_after_staging_rc'));
+});`;
+          if (!s.includes(oldBlock)) throw new Error('stale schema-contract test block not found exactly');
+          s = s.replace(oldBlock, newBlock);
+          fs.writeFileSync(path, s);
+          NODE
+          test "$(git diff --name-only | paste -sd, -)" = 'tests/database-contract.test.mjs'
+          git diff --check
+          git add tests/database-contract.test.mjs
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test(db): align schema contract with verified replay evidence'
+          test "$(git rev-parse HEAD^)" = "$expected"
+          git push origin "HEAD:refs/heads/${target}"
