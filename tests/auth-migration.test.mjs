@@ -241,6 +241,8 @@ test('every migrated role keeps an optional password-change control after onboar
   const app = await readFile(new URL('../assets/app-v2.js', import.meta.url), 'utf8');
   assert.match(adminUsers, /auth_must_change_password:false/);
   assert.match(adminUsers, /password_scheme:'pbkdf2cf'/);
+  assert.match(adminUsers, /Starter password must be at least 12 characters/);
+  assert.doesNotMatch(adminUsers, /Temporary password must be at least 12 characters/);
   assert.match(app, /Starter password/);
   assert.match(app, /signs the team member straight in/);
   assert.match(ux, /btn\.id='changePasswordBtn'/);

@@ -91,6 +91,33 @@ test('booking evaluation returns actionable DST validation instead of changing t
   assert.deepEqual(overlap.timeChoices.map(choice => choice.offset), ['UTC+11:00', 'UTC+10:00']);
 });
 
+test('booking evaluation blocks photographers who still need personal password setup', async () => {
+  globalThis.fetch = async url => {
+    const parsed = new URL(String(url));
+    if (parsed.origin === 'https://www.googleapis.com') {
+      throw new Error('Google Calendar must not be checked for a credential-blocked photographer');
+    }
+    const table = parsed.pathname.split('/').pop();
+    const output = table === 'users' ? [{ ...user, auth_must_change_password: true }]
+      : table === 'provider_profiles' ? [profile]
+        : table === 'services' ? services
+          : [];
+    return Response.json(output);
+  };
+
+  const result = await evaluateBooking(env, {
+    photographerId,
+    area: 'Inner East',
+    serviceCodes: ['photos'],
+    startLocal: '2026-08-24T10:00'
+  });
+
+  assert.equal(result.available, false);
+  assert.equal(result.connected, false);
+  assert.equal(result.code, 'PHOTOGRAPHER_CREDENTIALS_REQUIRED');
+  assert.match(result.reason, /personal password setup/i);
+});
+
 test('privacy-safe event filtering excludes the managed event and never returns personal details', () => {
   const events = [
     { id: 'managed', summary: 'Customer address and private notes', start: { dateTime: '2026-08-23T23:00:00Z' }, end: { dateTime: '2026-08-24T00:30:00Z' } },

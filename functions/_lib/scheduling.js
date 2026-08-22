@@ -196,7 +196,7 @@ function workingRule(profile, start, end) {
 
 async function photographer(env, userId) {
   const user = (await supa(env, 'users', {
-    query: `select=id,name,email,role_code,active&id=eq.${encodeURIComponent(userId || '')}&limit=1`
+    query: `select=id,name,email,role_code,active,auth_must_change_password&id=eq.${encodeURIComponent(userId || '')}&limit=1`
   }))?.[0];
   if (!user || user.active === false || user.role_code !== 'photographer') return null;
   const profile = (await supa(env, 'provider_profiles', {
@@ -341,7 +341,7 @@ async function calendarBusy(env, userId, profile, min, max, excludeTaskId) {
 }
 
 export function schedulingStatus(code) {
-  if (['PHOTOGRAPHER_NOT_ELIGIBLE', 'AREA_NOT_COVERED', 'SERVICE_NOT_CONFIGURED'].includes(code)) return 422;
+  if (['PHOTOGRAPHER_NOT_ELIGIBLE', 'PHOTOGRAPHER_CREDENTIALS_REQUIRED', 'AREA_NOT_COVERED', 'SERVICE_NOT_CONFIGURED'].includes(code)) return 422;
   if (['SERVICE_REQUIRED', 'SERVICE_NOT_AVAILABLE', 'INVALID_TIME', 'NONEXISTENT_LOCAL_TIME', 'AMBIGUOUS_LOCAL_TIME'].includes(code)) return 400;
   if (code === 'GOOGLE_UNAVAILABLE') return 502;
   return 409;
@@ -404,6 +404,14 @@ export async function evaluateBooking(env, {
   const photographerData = await photographer(env, photographerId);
   if (!photographerData) {
     return { available: false, connected: false, code: 'PHOTOGRAPHER_NOT_ELIGIBLE', reason: 'Choose an active Photographer who is configured for booking.' };
+  }
+  if (photographerData.user.auth_must_change_password === true) {
+    return {
+      available: false,
+      connected: false,
+      code: 'PHOTOGRAPHER_CREDENTIALS_REQUIRED',
+      reason: 'That Photographer needs to complete personal password setup before Northlight can offer bookable times.'
+    };
   }
   const services = await serviceRules(env, serviceCodes, requireActiveServices);
   if (services.error) return { available: false, connected: false, ...services.error };
