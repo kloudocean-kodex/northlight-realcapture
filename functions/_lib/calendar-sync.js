@@ -85,7 +85,8 @@ export function taskCalendarSnapshot(task = {}) {
 
 export function managedCalendarSnapshotsEqual(left, right) {
   if (!left || !right) return false;
-  return JSON.stringify(left) === JSON.stringify(right);
+  return ['summary', 'description', 'location', 'start', 'end', 'northlightTaskId', 'northlightTaskNo']
+    .every(key => String(left[key] ?? '') === String(right[key] ?? ''));
 }
 
 export function calendarEventOwnedByTask(event, task) {

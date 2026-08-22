@@ -183,6 +183,17 @@ test('Calendar version comparison distinguishes provider metadata from managed-f
 
   assert.equal(calendarEventOwnedByTask(original, task), true);
   assert.equal(managedCalendarSnapshotsEqual(managedCalendarSnapshot(original), task.metadata.calendar_managed_snapshot), true);
+  task.metadata.calendar_managed_snapshot = {
+    northlightTaskNo: task.metadata.calendar_managed_snapshot.northlightTaskNo,
+    northlightTaskId: task.metadata.calendar_managed_snapshot.northlightTaskId,
+    end: task.metadata.calendar_managed_snapshot.end,
+    start: task.metadata.calendar_managed_snapshot.start,
+    location: task.metadata.calendar_managed_snapshot.location,
+    description: task.metadata.calendar_managed_snapshot.description,
+    summary: task.metadata.calendar_managed_snapshot.summary
+  };
+  assert.equal(managedCalendarSnapshotsEqual(managedCalendarSnapshot(original), task.metadata.calendar_managed_snapshot), true);
+  assert.equal(managedCalendarEventNeedsReview(task, original), false);
   assert.equal(managedCalendarEventNeedsReview(task, reminderOnly), false);
   assert.equal(calendarEventHasDeleteSensitiveChanges(reminderOnly), true);
   assert.equal(managedCalendarEventNeedsReview(task, moved), true);
